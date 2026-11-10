@@ -40,6 +40,7 @@
 | 2026-11-10 15:00 | Ian, Roland, Amanya | Blood-service expert Q&A session. KDPA compliance notes captured (see KNOWLEDGE.md §9). |
 | 2026-11-10 ~16:00 | Roland (via Claude) | Team plan shared: roles, API contract, tech stack, status lifecycle, cut rules, sleep shifts. |
 | 2026-11-10 16:15 | Ian | Pre-build review. Tech stack NOT yet decided. No code committed. Build starts 16:30. |
+| 2026-11-10 16:30–17:16 | Ian | Full data exploration complete. All 4 cleaning rules verified against real data. ETA model trained and pushed to GitHub. |
 
 ---
 
@@ -52,6 +53,10 @@
 - [x] API contract agreed (7 endpoints — see KNOWLEDGE.md §10)
 - [x] Request status lifecycle defined (Raised → Received)
 - [x] Expert session notes captured (KDPA compliance — see KNOWLEDGE.md §9)
+- [x] **`ml/train_eta.py`** — trains Random Forest on 34,135 clean transfers. Run once to produce `eta_model.pkl`
+- [x] **`ml/predict.py`** — Roland imports this. `predict_eta(source_id, dest_id, now)` → `(low, mid, high)` in minutes. Auto-fallback to table lookup if model offline.
+- [x] **`ml/eta_model.pkl`** — trained model saved to repo
+- [x] Baseline vs model numbers confirmed: **Baseline 17.8 min MAE → Model 14.1 min MAE → 20.6% improvement**
 
 ---
 
