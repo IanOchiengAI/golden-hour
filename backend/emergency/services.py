@@ -4,6 +4,7 @@ moves the lifecycle does not allow and writes an AuditEvent.
 """
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from . import matching
 from .audit import record
@@ -27,7 +28,7 @@ ALLOWED_TRANSITIONS = {
 
 
 class InvalidTransition(Exception):
-    pass
+    """A move the lifecycle does not allow. The API returns it as 409 Conflict."""
 
 
 def transition(req: EmergencyRequest, new_status: str, *, actor=None, reason="", details=None):
@@ -35,7 +36,8 @@ def transition(req: EmergencyRequest, new_status: str, *, actor=None, reason="",
     if new_status not in ALLOWED_TRANSITIONS[old]:
         raise InvalidTransition(f"Cannot move request {req.pk} from {old} to {new_status}")
     req.status = new_status
-    req.save(update_fields=["status", "updated_at"])
+    req.status_changed_at = timezone.now()
+    req.save(update_fields=["status", "status_changed_at", "updated_at"])
     record(
         action="status_changed", actor=actor, request=req, object_type="request", object_id=req.pk,
         before={"status": old}, after={"status": new_status, **(details or {})}, reason=reason,
@@ -59,6 +61,24 @@ def hold_option(req: EmergencyRequest, option: RankedOption, *, actor=None, reas
         reason=reason,
     )
     return holds
+
+
+def release_holds(req: EmergencyRequest, *, reason: str, actor=None) -> list[str]:
+    """
+    Release the request's active holds so the units can be offered again.
+    Consumed holds (units already dispatched) are never released.
+    Returns the released unit ids.
+    """
+    holds = req.holds.filter(released_at__isnull=True, consumed_at__isnull=True)
+    unit_ids = list(holds.values_list("unit_id", flat=True))
+    if not unit_ids:
+        return []
+    holds.update(released_at=timezone.now(), release_reason=reason[:200])
+    record(
+        action="holds_released", actor=actor, request=req, object_type="request", object_id=req.pk,
+        before={"unit_ids": unit_ids}, after={"unit_ids": []}, reason=reason,
+    )
+    return unit_ids
 
 
 MAX_MATCH_ATTEMPTS = 3
