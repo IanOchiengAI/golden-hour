@@ -1,1 +1,0 @@
-# Golden Hour — Algorithm package
