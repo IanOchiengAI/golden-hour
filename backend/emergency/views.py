@@ -1,5 +1,6 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -9,9 +10,11 @@ from accounts.permissions import roles_allowed
 from . import services, stock
 from .country import data_as_of
 from .models import EmergencyRequest
+from .audit import record
+from .models import Dispatch
 from .serializers import (
-    AuthoriseSerializer, CreateRequestSerializer, DecisionSerializer, OptionSerializer,
-    RequestDetailSerializer, RequestSerializer,
+    AuthoriseSerializer, CreateRequestSerializer, DecisionSerializer, DispatchSerializer,
+    DispatchStatusSerializer, OptionSerializer, ReleaseSerializer, RequestDetailSerializer, RequestSerializer,
 )
 
 
@@ -98,3 +101,64 @@ class AuthoriseView(APIView):
         data.is_valid(raise_exception=True)
         req = services.authorise(req, actor=request.user, **data.validated_data)
         return Response(RequestDetailSerializer(req).data)
+
+
+def _require_facility(request, facility_id, what):
+    """Role checks pass already; this checks the caller works at the right site. Refusals are audited."""
+    profile = request.user.profile
+    if profile.facility_id != facility_id:
+        record(action="access_denied", actor=request.user, object_type="endpoint", object_id=request.path,
+               after={"method": request.method, "reason": f"not at {what} facility {facility_id}"})
+        raise PermissionDenied(f"Only staff at {facility_id} can do this.")
+
+
+def _dispatch_response(dispatch, warnings=()):
+    dispatch.refresh_from_db()
+    return Response({
+        "dispatch": DispatchSerializer(dispatch).data,
+        "request_status": dispatch.request.status,
+        "warnings": list(warnings),
+    })
+
+
+class DispatchReleaseView(APIView):
+    """
+    POST /dispatches/{id}/release — lab officer at the supplying site confirms or declines.
+    A decline holds the next-ranked site and sends the request back to the officer.
+    """
+
+    permission_classes = [roles_allowed(Role.LAB_OFFICER)]
+
+    def post(self, request, dispatch_id):
+        dispatch = get_object_or_404(Dispatch.objects.select_related("request", "option"), pk=dispatch_id)
+        _require_facility(request, dispatch.from_facility_id, "supplying")
+        data = ReleaseSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        services.release(dispatch, actor=request.user, **data.validated_data)
+        return _dispatch_response(dispatch)
+
+
+class DispatchStatusView(APIView):
+    """
+    POST /dispatches/{id}/status — in_transit by the supplying lab officer,
+    received by a clinician at the requesting hospital.
+    """
+
+    permission_classes = [roles_allowed(Role.LAB_OFFICER, Role.CLINICIAN)]
+
+    def post(self, request, dispatch_id):
+        dispatch = get_object_or_404(Dispatch.objects.select_related("request", "option"), pk=dispatch_id)
+        data = DispatchStatusSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        new_status = data.validated_data["status"]
+        role = request.user.profile.role
+        if new_status == "in_transit":
+            if role != Role.LAB_OFFICER:
+                raise PermissionDenied("Only the supplying lab officer marks units in transit.")
+            _require_facility(request, dispatch.from_facility_id, "supplying")
+        else:
+            if role != Role.CLINICIAN:
+                raise PermissionDenied("Only a clinician at the requesting hospital confirms receipt.")
+            _require_facility(request, dispatch.to_facility_id, "requesting")
+        dispatch, warnings = services.update_dispatch_status(dispatch, actor=request.user, **data.validated_data)
+        return _dispatch_response(dispatch, warnings)

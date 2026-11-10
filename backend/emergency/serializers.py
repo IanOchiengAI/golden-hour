@@ -1,7 +1,9 @@
 from rest_framework import serializers
 
 from .country import get_config
-from .models import Component, Dispatch, EmergencyRequest, PATIENT_GROUP_CHOICES, RankedOption, Urgency
+from .models import (
+    Component, Dispatch, EmergencyRequest, PATIENT_GROUP_CHOICES, RankedOption, TransportMode, Urgency,
+)
 from .rules import CompatibilityError, compatible_donor_groups
 
 
@@ -139,3 +141,20 @@ class RequestDetailSerializer(RequestSerializer):
     def get_dispatch(self, r):
         d = r.dispatches.order_by("-created_at", "-id").first()
         return DispatchSerializer(d).data if d else None
+
+
+class ReleaseSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=["confirm", "decline"])
+    reason = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+    transport_mode = serializers.ChoiceField(choices=TransportMode.choices, required=False, allow_blank=True,
+                                             default="")
+
+    def validate(self, attrs):
+        _require_reason(attrs, ("decline",))
+        return attrs
+
+
+class DispatchStatusSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["in_transit", "received"])
+    coolbox_max_temp_c = serializers.FloatField(required=False, allow_null=True, default=None,
+                                                min_value=-30, max_value=60)

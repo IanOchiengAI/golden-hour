@@ -345,3 +345,113 @@ def authorise(req: EmergencyRequest, *, actor, action: str, reason="") -> Emerge
         return req
 
     raise ValueError(f"Unknown authorisation action: {action}")
+
+
+# ── Supplying lab: release or decline ────────────────────────────────────
+def _locked_dispatch(dispatch: Dispatch) -> Dispatch:
+    return Dispatch.objects.select_for_update().select_related("request", "option").get(pk=dispatch.pk)
+
+
+def _hold_next_site(req: EmergencyRequest, after_rank: int, *, actor=None):
+    """Hold the next-ranked option whose units are all still free. Returns it, or None."""
+    for option in req.options.filter(rank__gt=after_rank).order_by("rank"):
+        try:
+            with transaction.atomic():
+                hold_option(req, option, actor=actor, reason="Supplier declined; next-ranked site held")
+            return option
+        except IntegrityError:
+            continue   # some of its units were taken meanwhile; try the next site
+    return None
+
+
+@transaction.atomic
+def release(dispatch: Dispatch, *, actor, action: str, reason="", transport_mode="") -> Dispatch:
+    """
+    confirm: the qualified lab officer releases the units → request Dispatched.
+    decline: log the reason, release the hold, hold the next-ranked site and send
+             the request back to the blood bank officer to decide again.
+    """
+    dispatch = _locked_dispatch(dispatch)
+    req = _locked(dispatch.request)
+    if dispatch.status != DispatchStatus.AWAITING_RELEASE:
+        raise InvalidTransition(f"Dispatch {dispatch.pk} is {dispatch.status}; '{action}' needs AwaitingRelease.")
+    require_status(req, (S.SENT_TO_SUPPLIER,), action)
+    now = timezone.now()
+
+    if action == "confirm":
+        dispatch.status = DispatchStatus.RELEASED
+        dispatch.released_by, dispatch.released_at = actor, now
+        dispatch.transport_mode = transport_mode or ""
+        dispatch.save(update_fields=["status", "released_by", "released_at", "transport_mode"])
+        # The units have left: their holds become permanent (see UnitHold.consumed_at).
+        req.holds.filter(unit_id__in=dispatch.unit_ids, released_at__isnull=True).update(consumed_at=now)
+        record(action="release_confirmed", actor=actor, request=req, object_type="dispatch",
+               object_id=dispatch.pk, before={"status": DispatchStatus.AWAITING_RELEASE},
+               after={"status": DispatchStatus.RELEASED, "unit_ids": dispatch.unit_ids,
+                      "transport_mode": dispatch.transport_mode}, reason=reason)
+        transition(req, S.DISPATCHED, actor=actor, details={"dispatch_id": dispatch.pk})
+        return dispatch
+
+    if action == "decline":
+        dispatch.status = DispatchStatus.DECLINED
+        dispatch.decline_reason = reason
+        dispatch.save(update_fields=["status", "decline_reason"])
+        record(action="release_declined", actor=actor, request=req, object_type="dispatch",
+               object_id=dispatch.pk, before={"status": DispatchStatus.AWAITING_RELEASE},
+               after={"status": DispatchStatus.DECLINED, "facility_id": dispatch.from_facility_id},
+               reason=reason)
+        release_holds(req, reason=f"Supplier declined: {reason}", actor=actor)
+        nxt = _hold_next_site(req, dispatch.option.rank, actor=actor)
+        if nxt is None:
+            transition(req, S.HANDLED_MANUALLY, actor=actor, reason="All ranked sites declined or unavailable")
+        else:
+            # Every move of blood needs a human Accept: back to the officer.
+            transition(req, S.UNITS_HELD, actor=actor, details={"facility_id": nxt.facility_id, "rank": nxt.rank})
+            transition(req, S.AWAITING_DECISION, actor=actor)
+        return dispatch
+
+    raise ValueError(f"Unknown release action: {action}")
+
+
+# ── Transport status ─────────────────────────────────────────────────────
+@transaction.atomic
+def update_dispatch_status(dispatch: Dispatch, *, actor, status: str, coolbox_max_temp_c=None):
+    """
+    in_transit: supplying lab marks the units on the road.
+    received:   requesting clinician confirms arrival; a cool box above the
+                configured limit is flagged so the receiving lab quarantines the units.
+    Returns (dispatch, warnings).
+    """
+    dispatch = _locked_dispatch(dispatch)
+    req = _locked(dispatch.request)
+    now = timezone.now()
+    warnings = []
+
+    if status == "in_transit":
+        if dispatch.status != DispatchStatus.RELEASED:
+            raise InvalidTransition(f"Dispatch {dispatch.pk} is {dispatch.status}; 'in_transit' needs Released.")
+        dispatch.status, dispatch.in_transit_at = DispatchStatus.IN_TRANSIT, now
+        dispatch.save(update_fields=["status", "in_transit_at"])
+        transition(req, S.IN_TRANSIT, actor=actor, details={"dispatch_id": dispatch.pk})
+        return dispatch, warnings
+
+    if status == "received":
+        if dispatch.status != DispatchStatus.IN_TRANSIT:
+            raise InvalidTransition(f"Dispatch {dispatch.pk} is {dispatch.status}; 'received' needs InTransit.")
+        dispatch.status, dispatch.received_at, dispatch.received_by = DispatchStatus.RECEIVED, now, actor
+        dispatch.coolbox_max_temp_c = coolbox_max_temp_c
+        dispatch.save(update_fields=["status", "received_at", "received_by", "coolbox_max_temp_c"])
+        limit = float(get_config().get("coolbox_max_temp_c", 10))
+        if coolbox_max_temp_c is not None and coolbox_max_temp_c > limit:
+            warnings.append(
+                f"Cool box reached {coolbox_max_temp_c:g} °C (limit {limit:g} °C) — quarantine these units "
+                "and do not transfuse until the lab has checked them."
+            )
+            record(action="cold_chain_excursion_on_arrival", actor=actor, request=req, object_type="dispatch",
+                   object_id=dispatch.pk, after={"coolbox_max_temp_c": coolbox_max_temp_c, "limit_c": limit,
+                                                 "unit_ids": dispatch.unit_ids})
+        transition(req, S.RECEIVED, actor=actor,
+                   details={"dispatch_id": dispatch.pk, "coolbox_max_temp_c": coolbox_max_temp_c})
+        return dispatch, warnings
+
+    raise ValueError(f"Unknown dispatch status: {status}")
