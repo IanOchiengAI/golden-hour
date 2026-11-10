@@ -13,7 +13,7 @@ from .models import EmergencyRequest
 from .audit import record
 from .models import Dispatch
 from .serializers import (
-    AuthoriseSerializer, CreateRequestSerializer, DecisionSerializer, DispatchSerializer,
+    AuditEventSerializer, AuthoriseSerializer, CreateRequestSerializer, DecisionSerializer, DispatchSerializer,
     DispatchStatusSerializer, OptionSerializer, ReleaseSerializer, RequestDetailSerializer, RequestSerializer,
 )
 
@@ -162,3 +162,24 @@ class DispatchStatusView(APIView):
             _require_facility(request, dispatch.to_facility_id, "requesting")
         dispatch, warnings = services.update_dispatch_status(dispatch, actor=request.user, **data.validated_data)
         return _dispatch_response(dispatch, warnings)
+
+
+class AuditView(APIView):
+    """
+    GET /audit?request_id= — the full trail for one request, oldest first.
+    Officers and MoH only: audit events contain patient fields, so supplying labs are refused.
+    """
+
+    permission_classes = [roles_allowed(Role.BLOOD_BANK_OFFICER, Role.MOH_OFFICER)]
+
+    def get(self, request):
+        raw = request.query_params.get("request_id", "")
+        if not raw.isdigit():
+            return Response({"request_id": ["A numeric request_id is required."]}, status=status.HTTP_400_BAD_REQUEST)
+        req = get_object_or_404(EmergencyRequest, pk=int(raw))
+        events = req.audit_events.order_by("created_at", "id")
+        return Response({
+            "request_id": req.pk,
+            "status": req.status,
+            "events": AuditEventSerializer(events, many=True).data,
+        })

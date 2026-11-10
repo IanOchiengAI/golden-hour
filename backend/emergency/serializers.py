@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from .country import get_config
 from .models import (
-    Component, Dispatch, EmergencyRequest, PATIENT_GROUP_CHOICES, RankedOption, TransportMode, Urgency,
+    AuditEvent, Component, Dispatch, EmergencyRequest, PATIENT_GROUP_CHOICES, RankedOption, TransportMode, Urgency,
 )
 from .rules import CompatibilityError, compatible_donor_groups
 
@@ -158,3 +158,20 @@ class DispatchStatusSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=["in_transit", "received"])
     coolbox_max_temp_c = serializers.FloatField(required=False, allow_null=True, default=None,
                                                 min_value=-30, max_value=60)
+
+
+class AuditEventSerializer(serializers.ModelSerializer):
+    time = serializers.DateTimeField(source="created_at")
+    actor = serializers.SerializerMethodField()
+    role = serializers.CharField(source="actor_role")
+    object = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AuditEvent
+        fields = ["id", "time", "actor", "role", "action", "object", "before", "after", "reason"]
+
+    def get_actor(self, e):
+        return e.actor_username or "system"
+
+    def get_object(self, e):
+        return f"{e.object_type}:{e.object_id}" if e.object_type else ""

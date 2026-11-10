@@ -9,4 +9,5 @@ urlpatterns = [
     path("requests/<int:request_id>/authorise", views.AuthoriseView.as_view(), name="request-authorise"),
     path("dispatches/<int:dispatch_id>/release", views.DispatchReleaseView.as_view(), name="dispatch-release"),
     path("dispatches/<int:dispatch_id>/status", views.DispatchStatusView.as_view(), name="dispatch-status"),
+    path("audit", views.AuditView.as_view(), name="audit"),
 ]
