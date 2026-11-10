@@ -1,8 +1,21 @@
-# Pinned. scikit-learn must be exactly 1.9.1 to load ml/eta_model.pkl.
-Django==5.2.19
-djangorestframework==3.16.0
-scikit-learn==1.9.1
-numpy==2.5.4
-pandas==3.1.1
-scipy==1.18.1
-PyYAML==6.0.3
+# Golden Hour — Backend Dependencies
+
+# Core ML / Data
+numpy>=1.26
+pandas>=2.1
+scikit-learn>=1.4
+
+# API (Roland's choice — update if switching to FastAPI)
+# django>=4.2
+# djangorestframework>=3.15
+# OR:
+fastapi>=0.111
+uvicorn[standard]>=0.29
+httpx>=0.27          # for async HTTP calls (Africa's Talking, etc.)
+
+# Utilities
+pyyaml>=6.0          # country config (kenya.yaml)
+python-dotenv>=1.0   # .env support
+
+# SMS
+# africas-talking   # install separately: pip install africastalking
