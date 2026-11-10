@@ -1,7 +1,9 @@
+from django.db import IntegrityError
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from accounts.models import Role
@@ -9,7 +11,7 @@ from accounts.permissions import roles_allowed
 
 from . import services, stock
 from .audit import record
-from .country import data_as_of
+from .country import data_as_of, get_config
 from .models import Dispatch, DispatchStatus, EmergencyRequest, Status, Urgency
 from .serializers import (
     AuditEventSerializer, AuthoriseSerializer, CreateRequestSerializer, DecisionSerializer, DispatchSerializer,
@@ -73,9 +75,14 @@ class RequestCreateView(APIView):
     Clinicians see only their own hospital's requests.
     """
 
+    throttle_scope = "raise_request"   # per-user rate limit on raising requests
+
     def get_permissions(self):
         roles = REQUEST_READERS if self.request.method == "GET" else (Role.CLINICIAN,)
         return [roles_allowed(*roles)()]
+
+    def get_throttles(self):
+        return [ScopedRateThrottle()] if self.request.method == "POST" else []
 
     def get(self, request):
         statuses, urgency, limit = list_params(request, Status.values)
@@ -90,8 +97,24 @@ class RequestCreateView(APIView):
     def post(self, request):
         data = CreateRequestSerializer(data=request.data)
         data.is_valid(raise_exception=True)
+        fields = data.validated_data
+
+        # Idempotency: a retry with the same client_request_id returns the original.
+        replay = self._replay(request.user, fields)
+        if replay is not None:
+            return replay
 
         facility_id = request.user.profile.facility_id
+        services.expire_stale_holds()   # timed-out requests don't count towards the cap
+        if services.open_request_count(facility_id) >= int(get_config().get("max_open_requests_per_facility", 10)):
+            record(action="request_refused_cap", actor=request.user, object_type="facility", object_id=facility_id,
+                   reason="Too many open requests for this facility")
+            return Response(
+                {"detail": f"{facility_id} already has the maximum number of open requests. "
+                           "Complete or cancel one, or call the blood bank."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
         try:
             facility = stock.get_facility(facility_id) if facility_id else None
             if facility is None:
@@ -99,12 +122,32 @@ class RequestCreateView(APIView):
                     {"detail": "Your account is not linked to a known facility."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            req = services.create_request(user=request.user, requesting_facility_id=facility_id,
-                                          **data.validated_data)
+            req = services.create_request(user=request.user, requesting_facility_id=facility_id, **fields)
         except stock.StarterDataUnavailable as e:
             return starter_data_down(e)
+        except IntegrityError:
+            # Two copies of the same retry arrived together; the other one won.
+            replay = self._replay(request.user, fields)
+            if replay is not None:
+                return replay
+            raise
 
         return Response(RequestSerializer(req).data, status=status.HTTP_201_CREATED)
+
+    REPLAY_FIELDS = ("patient_blood_group", "component", "units_requested", "urgency", "clinical_note")
+
+    def _replay(self, user, fields):
+        """200 with the original request if this client_request_id was already used; 409 if reused differently."""
+        cid = fields.get("client_request_id")
+        if not cid:
+            return None
+        existing = EmergencyRequest.objects.filter(raised_by=user, client_request_id=cid).first()
+        if existing is None:
+            return None
+        if any(getattr(existing, f) != fields[f] for f in self.REPLAY_FIELDS):
+            return Response({"detail": f"client_request_id {cid} was already used for a different request."},
+                            status=status.HTTP_409_CONFLICT)
+        return Response(RequestSerializer(existing).data, status=status.HTTP_200_OK)
 
 
 class RequestOptionsView(APIView):
@@ -143,6 +186,7 @@ class DecisionView(APIView):
         req = get_object_or_404(EmergencyRequest, pk=request_id)
         data = DecisionSerializer(data=request.data)
         data.is_valid(raise_exception=True)
+        services.expire_stale_holds()   # commits on its own; a timed-out request now gives 409
         req = services.decide(req, actor=request.user, **data.validated_data)
         return Response(RequestDetailSerializer(req).data)
 
@@ -156,6 +200,7 @@ class AuthoriseView(APIView):
         req = get_object_or_404(EmergencyRequest, pk=request_id)
         data = AuthoriseSerializer(data=request.data)
         data.is_valid(raise_exception=True)
+        services.expire_stale_holds()
         req = services.authorise(req, actor=request.user, **data.validated_data)
         return Response(RequestDetailSerializer(req).data)
 

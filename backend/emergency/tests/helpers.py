@@ -3,6 +3,7 @@ import unittest
 from unittest import mock
 
 from django.conf import settings
+from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
@@ -45,6 +46,7 @@ class Actors:
 
     def setUp(self):
         super().setUp()
+        cache.clear()   # rate-limit counters live in the cache; start each test fresh
         self.clinician = make_user("clin", Role.CLINICIAN, "HSP-002")
         self.officer = make_user("officer", Role.BLOOD_BANK_OFFICER, "RBTC-NBO")
         self.moh = make_user("moh", Role.MOH_OFFICER)

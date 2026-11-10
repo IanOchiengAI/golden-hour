@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "corsheaders",
     "rest_framework",
     "rest_framework.authtoken",
     "accounts",
@@ -51,6 +52,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",   # must come before CommonMiddleware
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -125,7 +127,8 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # ── API ──────────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.TokenAuthentication",
+        # DRF token auth, but tokens expire after TOKEN_TTL_HOURS.
+        "accounts.authentication.ExpiringTokenAuthentication",
     ],
     # Deny by default; every view states which roles may call it.
     "DEFAULT_PERMISSION_CLASSES": [
@@ -135,8 +138,20 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "emergency.exceptions.exception_handler",
     "DEFAULT_THROTTLE_RATES": {
         "login": os.environ.get("LOGIN_THROTTLE_RATE", "10/min"),
+        # Per user. Stops one account from raising requests in a loop to hold stock.
+        "raise_request": os.environ.get("RAISE_REQUEST_THROTTLE_RATE", "10/min"),
     },
 }
+
+# Auth tokens expire; the user logs in again.
+TOKEN_TTL_HOURS = float(os.environ.get("TOKEN_TTL_HOURS", "12"))
+
+# ── CORS: which frontends may call the API from a browser ────────────────
+# Comma-separated origins. Defaults cover the Vite dev server.
+CORS_ALLOWED_ORIGINS = [o for o in os.environ.get(
+    "CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if o]
+# Token auth uses the Authorization header, not cookies.
+CORS_ALLOW_CREDENTIALS = False
 
 # ── HTTPS hardening when deployed ────────────────────────────────────────
 if not DEBUG:

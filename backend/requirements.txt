@@ -1,6 +1,7 @@
 ﻿# Pinned. scikit-learn must be exactly 1.9.1 to load ml/eta_model.pkl.
 Django==5.2.19
 djangorestframework==3.16.0
+django-cors-headers==4.9.0
 scikit-learn==1.9.1
 numpy==2.5.4
 pandas==3.1.1

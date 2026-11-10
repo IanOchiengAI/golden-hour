@@ -15,6 +15,7 @@ import argparse
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 DOMAIN = "goldenhour.health"
@@ -22,6 +23,8 @@ DOMAIN = "goldenhour.health"
 
 class Api:
     def __init__(self, base, password):
+        if urllib.parse.urlparse(base).scheme not in ("http", "https"):
+            sys.exit(f"--base must be an http:// or https:// URL, got {base!r}")
         self.base, self.password, self.tokens = base.rstrip("/"), password, {}
 
     def call(self, method, path, user=None, body=None):
@@ -31,7 +34,7 @@ class Api:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(self.base + path, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=60) as r:
+            with urllib.request.urlopen(req, timeout=60) as r:  # nosec B310 - scheme checked in __init__
                 return json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             sys.exit(f"\n✗ {method} {path} as {user} → {e.code}: {e.read().decode('utf-8')}")
