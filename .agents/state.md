@@ -42,6 +42,7 @@
 | 2026-11-10 16:15 | Ian | Pre-build review. Tech stack NOT yet decided. No code committed. Build starts 16:30. |
 | 2026-11-10 16:30–17:16 | Ian | Full data exploration complete. All 4 cleaning rules verified against real data. ETA model trained and pushed to GitHub. |
 | 2026-11-10 ~17:30–19:20 | Roland (via Claude Code) | Backend on `ft/backend`: Django + DRF scaffold, token auth + roles, audit log, rules engine + tests, `POST /requests` (matching + auto-hold at creation), `GET /requests/{id}/options` (read-only). 35 tests pass. Found `blood_system.sqlite` committed as 0 bytes; added rebuild script. |
+| 2026-11-10 ~19:30–22:00 | Ian (via Antigravity) | Full ML iteration session. Emergency-weighted training (3×/2×/1×). Conformal calibration on emergency+urgent subset only (n=1,028) → 91.1% emergency coverage (was 73%). Final numbers: Overall MAE 14.5 min (20.7% better), Emergency MAE 30.8 min (25.8% better). Thread-safe model cache. 4-tuple predict_eta return (low, mid, high, method). `as_of` param in ranking. Data-driven ETA cap (602 min). `docs/ian-numbers.md` written. `docs/e2e_test.py` written and pushed. Replied to Roland's GitHub issue #4 (commit 055cf35 + b7284d0 + 6748755). |
 
 ---
 
@@ -57,7 +58,14 @@
 - [x] **`ml/train_eta.py`** — trains Random Forest on 34,135 clean transfers. Run once to produce `eta_model.pkl`
 - [x] **`ml/predict.py`** — Roland imports this. `predict_eta(source_id, dest_id, now)` → `(low, mid, high)` in minutes. Auto-fallback to table lookup if model offline.
 - [x] **`ml/eta_model.pkl`** — trained model saved to repo
-- [x] Baseline vs model numbers confirmed: **Baseline 17.8 min MAE → Model 14.1 min MAE → 20.6% improvement**
+- [x] Baseline vs model numbers confirmed (final, emergency-weighted): **Overall: Baseline 18.3 → Model 14.5 min (20.7% better), coverage 96.2%. Emergency: Baseline 41.5 → Model 30.8 min (25.8% better), coverage 91.1% ✅**
+- [x] **`ml/predict.py`** — thread-safe (Lock + double-checked locking), returns 4-tuple `(low, mid, high, method)`, conformal intervals (q05/q95 from emergency calib set), `_fmt_minutes()`, `get_eta_cap()`, `explain_eta()` with optional `route=` param
+- [x] **`ml/ranking.py`** — `DATA_AS_OF=date(2026,10,31)`, `_ETA_CAP_MINUTES` from model, `rank_candidates` takes `as_of`, passes `route=` to `explain_eta`, exposes `eta_method` in result dict, scarcity warning for O−
+- [x] **`ml/train_eta.py`** — 3-way 60/20/20 split, urgency join, emergency 3×/urgent 2× sample weights, emergency+urgent conformal calibration, full metrics breakdown
+- [x] **`ml/eta_model.pkl`** — retrained with keys: `rf`, `q05`, `q95`, `eta_cap`, `metrics`
+- [x] **`docs/ian-numbers.md`** — final numbers table, model card, pitch sentence, judge Q&A answers
+- [x] **`docs/e2e_test.py`** — black-box end-to-end API test script (pushed, commit 6748755)
+- [x] **GitHub issue #4** — replied to Roland (Dancode-188) with updated numbers and confirmation of both fixes
 - [x] **Backend (`backend/`, branch `ft/backend`)** — see `backend/README.md` for run steps and API shapes
   - Django 5.2 + DRF; token login `POST /auth/login` (rate-limited); role check on every endpoint; logins, failed logins and refused calls audited
   - Append-only `AuditEvent`; `EmergencyRequest`, `RankedOption`, `UnitHold` (DB allows one active hold per unit)
@@ -103,12 +111,13 @@
 
 ## Notes for owners (from backend integration)
 
-**Ian (`ml/`) — not edited by backend:**
-- `ml/ranking.py` `compute_dispatch_score()` uses `date.today()` for days-to-expiry. It should use the data as-of date (`data_as_of: 2026-10-31` in `config/kenya.yaml`); today every unit looks ~10 days closer to expiry than the data says. Suggest an `as_of: date` parameter the backend can pass.
-- `predict_eta()` still falls back silently. Backend works out `method` by calling `ml.predict._load_model()` itself (private function) — please return `method` from `predict_eta` so the backend can drop that.
-- `rank_candidates` docstring still shows `patient_blood_group=` (not a parameter).
-- Speed: model load ~5–9 s (backend warms it at server start); ~30 ms per site after. `predict_eta`/`explain_eta` open two SQLite connections per call. Backend sends only the 12 nearest sites (by route table) to `rank_candidates`.
-- Possible model saturation: HSP-002 request got exactly 436.0 min ETA for five different sites (HSP-020/018/012/019, RBTC-ELD).
+**Ian (`ml/`) — all items below are FIXED as of 22:00 EAT:**
+- ✅ `compute_dispatch_score()` / `rank_candidates` now take `as_of=date(2026,10,31)` — no more date.today() drift
+- ✅ `predict_eta()` returns 4-tuple `(low, mid, high, method)` — backend no longer needs to call `_load_model()`
+- ✅ `rank_candidates` result dicts include `eta_method: "model"|"fallback"`
+- ✅ Emergency coverage: 91.1% (was 73%) via emergency-subset conformal calibration
+- ⚠️ **For Roland:** when calling `rank_candidates`, pass `as_of=date(2026, 10, 31)` and include `national_group_stock` in candidate dicts (WARNING fires if missing). Read `result["eta_method"]` instead of calling `_load_model()`.
+- ⚠️ **Race condition (not Ian's to fix):** rank+hold sequence is not atomic — two simultaneous requests can race for the same O− unit. Roland needs `select_for_update()` in a transaction.
 
 **Daniel (`config/`):** `config/kenya.yaml` was created by backend with the keys it reads (see file comments). Add the sample second country by copying it; switch with env `COUNTRY_CONFIG`.
 
