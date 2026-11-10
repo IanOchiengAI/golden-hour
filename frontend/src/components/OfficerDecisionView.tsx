@@ -49,10 +49,14 @@ export const OfficerDecisionView: React.FC<{ selectedRequestId?: number }> = ({
     setIsLoading(true)
     setError(null)
     try {
-      const res = await api.getRequests()
+      const res = await api.getRequests({ status: 'AwaitingDecision,Escalated' })
       const list = Array.isArray(res) ? res : res.results || []
-      const pending = list.filter((r) => r.status === 'AwaitingDecision' || r.status === 'Escalated' || r.status === 'Matching')
-      const targetList = pending.length > 0 ? pending : list
+      // If none currently awaiting, fall back to general list
+      let targetList = list
+      if (targetList.length === 0) {
+        const allRes = await api.getRequests()
+        targetList = Array.isArray(allRes) ? allRes : allRes.results || []
+      }
       setRequests(targetList)
       if (targetList.length > 0 && !activeReqId) {
         setActiveReqId(targetList[0].id)
