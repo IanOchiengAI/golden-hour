@@ -108,6 +108,9 @@ class DispatchSerializer(serializers.ModelSerializer):
         fields = SUPPLIER_SAFE_DISPATCH_FIELDS
 
     def get_to_facility_name(self, d):
+        names = self.context.get("facility_names")
+        if names is not None:   # lists pass the names in, so the starter DB is read once
+            return names.get(d.to_facility_id, d.to_facility_id)
         from . import stock
         try:
             f = stock.get_facility(d.to_facility_id)
@@ -175,3 +178,54 @@ class AuditEventSerializer(serializers.ModelSerializer):
 
     def get_object(self, e):
         return f"{e.object_type}:{e.object_id}" if e.object_type else ""
+
+
+class RequestSummarySerializer(RequestSerializer):
+    """
+    One row in a work queue (GET /requests). Uses prefetched holds and dispatches,
+    so a list costs a fixed number of queries.
+    """
+
+    held_option = serializers.SerializerMethodField()
+    due_at = serializers.SerializerMethodField()
+    dispatch_id = serializers.SerializerMethodField()
+    dispatch_status = serializers.SerializerMethodField()
+    authorisation_route = serializers.CharField(read_only=True)
+    status_changed_at = serializers.DateTimeField(read_only=True)
+
+    class Meta(RequestSerializer.Meta):
+        fields = RequestSerializer.Meta.fields + [
+            "authorisation_route", "status_changed_at", "due_at", "held_option", "dispatch_id", "dispatch_status",
+        ]
+
+    def get_held_option(self, r):
+        hold = next((h for h in r.holds.all() if h.released_at is None), None)
+        if not hold:
+            return None
+        o = hold.option
+        return {"id": o.id, "rank": o.rank, "facility_id": o.facility_id, "facility_name": o.facility_name,
+                "eta": {"low_min": o.eta_low_min, "mid_min": o.eta_mid_min, "high_min": o.eta_high_min},
+                "is_partial": o.is_partial}
+
+    def get_due_at(self, r):
+        """When the officer (AwaitingDecision) or MoH (AwaitingAuthorisation) should have acted by."""
+        from datetime import timedelta
+
+        from .country import get_config
+        from .models import Status
+        key = {Status.AWAITING_DECISION: "decision_escalation_min",
+               Status.AWAITING_AUTHORISATION: "authorisation_escalation_min"}.get(r.status)
+        if not key:
+            return None
+        return (r.status_changed_at + timedelta(minutes=int(get_config().get(key, 5)))).isoformat()
+
+    def _latest_dispatch(self, r):
+        return max(r.dispatches.all(), key=lambda d: (d.created_at, d.id), default=None)
+
+    def get_dispatch_id(self, r):
+        d = self._latest_dispatch(r)
+        return d.id if d else None
+
+    def get_dispatch_status(self, r):
+        d = self._latest_dispatch(r)
+        return d.status if d else None

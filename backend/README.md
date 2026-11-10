@@ -10,10 +10,10 @@ officer can decide.
 **Built:** the full flow from raised to received — login and roles, rules engine,
 matching with auto-hold, officer decision, MoH authorisation (standing or
 per-transfer, from config), supplier release or decline (next site held),
-transport status, audit log and `GET /audit`, view-only Django admin.
-72 tests, including two end-to-end runs (one with the model offline).
-**Not built yet:** list endpoints for the screens' work queues, escalation
-timers, SMS, readiness (see [What's next](#whats-next)).
+transport status, audit log and `GET /audit`, work-queue lists for every screen,
+view-only Django admin. 85 tests, including two end-to-end runs (one with the
+model offline).
+**Not built yet:** escalation timers, SMS, readiness (see [What's next](#whats-next)).
 
 ---
 
@@ -158,7 +158,7 @@ a request takes about 1–2 seconds.
 python manage.py test
 ```
 
-Expected: `Ran 72 tests … OK` (about 3 minutes).
+Expected: `Ran 85 tests … OK` (about 3–4 minutes).
 
 | File | Covers |
 |---|---|
@@ -169,6 +169,7 @@ Expected: `Ran 72 tests … OK` (about 3 minutes).
 | `emergency/tests/test_decision_authorise.py` | Accept / change / reject, authorisation tier from config, units-just-taken 409, MoH approve / reject / stop / review, wrong-status 409, roles, no patient fields in the dispatch |
 | `emergency/tests/test_dispatch.py` | Lab confirm (units consumed, never offered again), decline → next site, decline everywhere → handled manually, facility checks, in transit → received, warm cool box warning |
 | `emergency/tests/test_end_to_end.py` | Raised → received through the API (with MoH approval; and with the model offline plus a supplier decline), checking every status and role in `GET /audit`; audit endpoint access and errors |
+| `emergency/tests/test_lists.py` | `GET /requests` (clinician sees own hospital only, filters, bad filters, summary row, query count fixed), `GET /requests/{id}` (options + hold, 404 across hospitals), `GET /dispatches` (supplying lab and receiving clinician only, no patient fields, status filter) |
 
 A `RuntimeError: boom` traceback in the output is **expected**: one test
 deliberately crashes the ML ranker to prove the fallback works.
@@ -433,6 +434,56 @@ Response `200`:
 | `options[].unit_ids` | Units this site would send, in pick order. |
 
 Up to `options_count` (3) options, best first.
+
+---
+
+### `GET /requests` — work queues
+
+**Roles:** `clinician` (own hospital's requests only), `blood_bank_officer`,
+`moh_officer` (all requests). Labs → `403` (they use `GET /dispatches`).
+
+| Query | Example | Notes |
+|---|---|---|
+| `status` | `?status=AwaitingDecision&status=Escalated` or `?status=AwaitingDecision,Escalated` | Any request status; unknown → `400` |
+| `urgency` | `?urgency=life_threatening` | |
+| `limit` | `?limit=20` | 1–200, default 50 |
+
+Suggested queues: officer `?status=AwaitingDecision,Escalated`; MoH
+`?status=AwaitingAuthorisation` (and `SentToSupplier` for standing-route
+requests it may stop); clinician: no filter.
+
+Response `200`, newest first:
+```json
+{"results": [{
+  "...": "same fields as POST /requests",
+  "authorisation_route": "", "status_changed_at": "2026-11-10T21:40:46+03:00",
+  "due_at": "2026-11-10T21:45:46+03:00",
+  "held_option": {"id": 1, "rank": 1, "facility_id": "HSP-001", "facility_name": "National Referral Hospital (Nairobi)",
+                  "eta": {"low_min": 46.0, "mid_min": 50.3, "high_min": 53.0}, "is_partial": false},
+  "dispatch_id": null, "dispatch_status": null
+}]}
+```
+
+`due_at` is when the officer (`AwaitingDecision`, `decision_escalation_min`) or
+MoH (`AwaitingAuthorisation`, `authorisation_escalation_min`) should act by;
+`null` in other statuses. Use it for a countdown.
+
+### `GET /requests/{id}` — status tracking
+
+Same roles and visibility; a clinician asking for another hospital's request
+gets `404`. Returns the request detail (below) plus `options` (same shape as in
+`GET /options`, with `is_held`).
+
+### `GET /dispatches` and `GET /dispatches/{id}`
+
+**Roles:** `lab_officer` (dispatches **from** their site — the lab's incoming
+work), `clinician` (dispatches **to** their hospital). Officers and MoH → `403`.
+Another site's dispatch → `404`. Same `status` and `limit` queries as above,
+with dispatch statuses (`AwaitingRelease`, `Released`, `InTransit`, `Received`,
+`Declined`, `Cancelled`).
+
+Response: `{"results": [ <dispatch object> ]}` (list) or one dispatch object
+(detail) — supplier-safe, no patient fields. Lab queue: `?status=AwaitingRelease,Released`.
 
 ---
 
@@ -735,11 +786,7 @@ Full plan with details: [`docs/backend-spec.md`](../docs/backend-spec.md).
 
 | Item | Role | Does |
 |---|---|---|
-| `GET /requests`, `GET /requests/{id}` | clinician (own facility), officer, MoH | Work queues and status tracking for the screens |
-| `GET /dispatches`, `GET /dispatches/{id}` | lab (from own site), clinician (to own site) | The lab screen's incoming dispatches |
 | Escalation timers | — | Decision not made in 5 min → `Escalated`, backup officer alerted (add-on) |
 | SMS (Africa's Talking) | — | Status updates from approved templates only (add-on) |
 | `GET /readiness` | officer, MoH | Hospital × blood group readiness map (add-on) |
-
-Until the list endpoints exist, the dispatch id comes from the `dispatch`
-object returned by `/decision` (standing route) or `/authorise` (approve).
+| Security hardening, deployment | — | CORS, `check --deploy`, gunicorn/whitenoise |
