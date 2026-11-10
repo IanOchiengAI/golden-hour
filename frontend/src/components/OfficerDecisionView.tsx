@@ -176,19 +176,14 @@ export const OfficerDecisionView: React.FC<{ selectedRequestId?: number }> = ({
     if (!activeReqId) return
     setIsSubmitting(true)
     setError(null)
+    setSuccessMsg(null)
     try {
       await api.submitDecision(activeReqId, 'accept')
       setSuccessMsg(`Decision confirmed: Rank 1 dispatch ACCEPTED. Assigned to supplying lab.`)
-      loadRequests()
-    } catch {
-      setSuccessMsg(`Decision confirmed: Option accepted. Request transitioned to SentToSupplier under standing emergency authorisation.`)
-      const cached = localStorage.getItem('gh_clinician_requests')
-      if (cached) {
-        const list = JSON.parse(cached) as EmergencyRequest[]
-        const updated = list.map((r) => (r.id === activeReqId ? { ...r, status: 'SentToSupplier' as const } : r))
-        localStorage.setItem('gh_clinician_requests', JSON.stringify(updated))
-        setRequests(updated)
-      }
+      await loadRequests()
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      setError(`Decision refused by server: ${errMsg}`)
     } finally {
       setIsSubmitting(false)
     }
@@ -201,6 +196,7 @@ export const OfficerDecisionView: React.FC<{ selectedRequestId?: number }> = ({
     }
     setIsSubmitting(true)
     setError(null)
+    setSuccessMsg(null)
 
     try {
       if (modalMode === 'change') {
@@ -213,11 +209,10 @@ export const OfficerDecisionView: React.FC<{ selectedRequestId?: number }> = ({
       }
       setModalMode(null)
       setDecisionReason('')
-      loadRequests()
-    } catch {
-      setSuccessMsg(`Decision logged: ${modalMode?.toUpperCase()} completed with clinical audit record.`)
-      setModalMode(null)
-      setDecisionReason('')
+      await loadRequests()
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      setError(`Action failed: ${errMsg}`)
     } finally {
       setIsSubmitting(false)
     }

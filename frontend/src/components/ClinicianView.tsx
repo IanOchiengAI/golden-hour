@@ -104,20 +104,21 @@ export const ClinicianView: React.FC<{ onRequestCreated?: (req: EmergencyRequest
     setIsConfirmingReceipt(true)
     setReceiptWarning(null)
     const temp = parseFloat(coolboxTemp)
+    const dispatchId = req.dispatch_id || req.id
+
     try {
-      await api.updateDispatchStatus(req.id, 'received', isNaN(temp) ? undefined : temp)
-      if (temp > 10.0) {
+      const res = await api.updateDispatchStatus(dispatchId, 'received', isNaN(temp) ? undefined : temp)
+      if (res.warning) {
+        setReceiptWarning(res.warning)
+      } else if (temp > 10.0) {
         setReceiptWarning(`CRITICAL ALERT: Cool box temperature (${temp}°C) breached 10°C limit! Units must be placed in quarantine immediately.`)
       }
       const updated: EmergencyRequest = { ...req, status: 'Received' }
       saveToLocal(updated)
-    } catch {
-      // Simulate success
-      if (temp > 10.0) {
-        setReceiptWarning(`CRITICAL ALERT: Cool box temperature (${temp}°C) breached 10°C limit! Units must be placed in quarantine immediately.`)
-      }
-      const updated: EmergencyRequest = { ...req, status: 'Received' }
-      saveToLocal(updated)
+      setReceiptModalReq(null)
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      setReceiptWarning(`Confirmation refused: ${errMsg}`)
     } finally {
       setIsConfirmingReceipt(false)
     }

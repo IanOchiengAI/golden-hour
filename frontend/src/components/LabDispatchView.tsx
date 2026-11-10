@@ -28,20 +28,21 @@ export const LabDispatchView: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null)
 
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
   const handleConfirmRelease = async (dispatchId: number) => {
     setIsSubmitting(true)
     setFeedbackMsg(null)
+    setErrorMsg(null)
     try {
       await api.releaseDispatch(dispatchId, 'confirm', transportMode)
       setFeedbackMsg(`Dispatch #${dispatchId} confirmed! Transport mode '${transportMode.toUpperCase()}' dispatched.`)
       setDispatches((prev) =>
         prev.map((d) => (d.id === dispatchId ? { ...d, status: 'Released', transport_mode: transportMode } : d))
       )
-    } catch {
-      setFeedbackMsg(`Dispatch #${dispatchId} confirmed! Transport mode '${transportMode.toUpperCase()}' dispatched.`)
-      setDispatches((prev) =>
-        prev.map((d) => (d.id === dispatchId ? { ...d, status: 'Released', transport_mode: transportMode } : d))
-      )
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setErrorMsg(`Release refused: ${msg}`)
     } finally {
       setIsSubmitting(false)
     }
@@ -50,13 +51,14 @@ export const LabDispatchView: React.FC = () => {
   const handleMarkInTransit = async (dispatchId: number) => {
     setIsSubmitting(true)
     setFeedbackMsg(null)
+    setErrorMsg(null)
     try {
       await api.updateDispatchStatus(dispatchId, 'in_transit')
       setFeedbackMsg(`Dispatch #${dispatchId} is now IN TRANSIT with live temperature tracking.`)
       setDispatches((prev) => (prev.map((d) => (d.id === dispatchId ? { ...d, status: 'InTransit' } : d))))
-    } catch {
-      setFeedbackMsg(`Dispatch #${dispatchId} is now IN TRANSIT with live temperature tracking.`)
-      setDispatches((prev) => (prev.map((d) => (d.id === dispatchId ? { ...d, status: 'InTransit' } : d))))
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setErrorMsg(`Status update refused: ${msg}`)
     } finally {
       setIsSubmitting(false)
     }
@@ -66,17 +68,16 @@ export const LabDispatchView: React.FC = () => {
     if (!declineReason.trim()) return
     setIsSubmitting(true)
     setFeedbackMsg(null)
+    setErrorMsg(null)
     try {
       await api.releaseDispatch(dispatchId, 'decline', undefined, declineReason)
       setFeedbackMsg(`Dispatch #${dispatchId} declined. Unit hold released; next-ranked facility auto-alerted.`)
       setDispatches((prev) => prev.filter((d) => d.id !== dispatchId))
       setModalDeclineId(null)
       setDeclineReason('')
-    } catch {
-      setFeedbackMsg(`Dispatch #${dispatchId} declined. Unit hold released; next-ranked facility auto-alerted.`)
-      setDispatches((prev) => prev.filter((d) => d.id !== dispatchId))
-      setModalDeclineId(null)
-      setDeclineReason('')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setErrorMsg(`Decline refused: ${msg}`)
     } finally {
       setIsSubmitting(false)
     }
@@ -114,6 +115,18 @@ export const LabDispatchView: React.FC = () => {
             <span>{feedbackMsg}</span>
           </div>
           <button onClick={() => setFeedbackMsg(null)} className="text-emerald-400 hover:text-white">
+            &times;
+          </button>
+        </div>
+      )}
+
+      {errorMsg && (
+        <div className="bg-rose-950/60 border border-rose-800 text-rose-200 text-xs p-3.5 rounded-xl flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <XCircle className="w-4 h-4 text-rose-400" />
+            <span>{errorMsg}</span>
+          </div>
+          <button onClick={() => setErrorMsg(null)} className="text-rose-400 hover:text-white">
             &times;
           </button>
         </div>
