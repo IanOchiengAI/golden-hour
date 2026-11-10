@@ -1,0 +1,46 @@
+# Golden Hour — country rules for Kenya.
+# Rules change here, not in code. Owner: Daniel (config/). Read by backend/emergency/country.py.
+
+country: Kenya
+country_code: KE
+timezone: Africa/Nairobi
+
+# The starter dataset ends on this date. Treat it as "today" for stock and
+# expiry checks, so units are judged against the data, not the wall clock.
+data_as_of: 2026-10-31
+
+# standing     = life-threatening requests go ahead under the Ministry of Health's
+#                standing regional authorisation; MoH officer is notified, can stop it,
+#                and reviews afterwards.
+# per_transfer = every transfer waits for MoH approval before dispatch.
+emergency_authorisation: standing
+
+# Target time for blood to arrive, by clinical urgency (minutes).
+urgency_targets_min:
+  life_threatening: 60
+  urgent: 240
+  routine: 1440
+
+# Blood bank officer must decide within this time or a backup officer is alerted.
+decision_escalation_min: 5
+authorisation_escalation_min: 10
+
+# Ranked sites shown to the blood bank officer.
+options_count: 3
+# Nearest sites (by route table) passed to the ETA model for ranking.
+ranking_shortlist: 12
+
+# Upper limit on units in one request (input validation).
+max_units_per_request: 10
+
+# Facility types allowed to send blood in an emergency.
+supplying_facility_types:
+  - regional_blood_centre
+  - satellite_blood_centre
+  - national_referral
+  - county_referral
+  - county_hospital
+  - sub_county_hospital
+  - maternity_hospital
+  - mission_hospital
+  - private_hospital

@@ -24,6 +24,10 @@ out/
 .env.local
 .env.*.local
 
+# Backend local data
+backend/app.sqlite3
+*.sqlite.tmp
+
 # IDE & OS
 .vscode/
 .idea/

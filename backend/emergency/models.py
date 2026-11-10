@@ -1,0 +1,136 @@
+from django.conf import settings
+from django.db import models
+
+
+class AuditEvent(models.Model):
+    """
+    Append-only record of every action: who, role, action, object, before, after,
+    reason, time. Rows can be added but never edited or deleted through the app.
+    """
+
+    request = models.ForeignKey(
+        "EmergencyRequest", null=True, blank=True, on_delete=models.PROTECT, related_name="audit_events"
+    )
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    actor_username = models.CharField(max_length=150, blank=True)   # kept even if the user is removed
+    actor_role = models.CharField(max_length=32, blank=True)         # "system" for automatic steps
+    action = models.CharField(max_length=64)
+    object_type = models.CharField(max_length=32, blank=True)
+    object_id = models.CharField(max_length=200, blank=True)
+    before = models.JSONField(null=True, blank=True)
+    after = models.JSONField(null=True, blank=True)
+    reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise RuntimeError("AuditEvent rows are append-only")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise RuntimeError("AuditEvent rows are append-only")
+
+    def __str__(self):
+        return f"{self.created_at:%Y-%m-%d %H:%M:%S} {self.actor_username or 'system'} {self.action}"
+
+
+class Status(models.TextChoices):
+    DRAFT_FROM_CALL = "DraftFromCall"
+    RAISED = "Raised"
+    MATCHING = "Matching"
+    UNITS_HELD = "UnitsHeld"
+    AWAITING_DECISION = "AwaitingDecision"
+    ESCALATED = "Escalated"
+    AWAITING_AUTHORISATION = "AwaitingAuthorisation"
+    SENT_TO_SUPPLIER = "SentToSupplier"
+    DISPATCHED = "Dispatched"
+    IN_TRANSIT = "InTransit"
+    RECEIVED = "Received"
+    HANDLED_MANUALLY = "HandledManually"
+
+
+class Urgency(models.TextChoices):
+    LIFE_THREATENING = "life_threatening"
+    URGENT = "urgent"
+    ROUTINE = "routine"
+
+
+class Component(models.TextChoices):
+    RBC = "RBC", "Red cells"
+    PLT = "PLT", "Platelets"
+    FFP = "FFP", "Fresh frozen plasma"
+
+
+BLOOD_GROUPS = ["O-", "O+", "A-", "A+", "B-", "B+", "AB-", "AB+"]
+PATIENT_GROUP_CHOICES = [(g, g) for g in BLOOD_GROUPS] + [("unknown", "Unknown")]
+
+
+class EmergencyRequest(models.Model):
+    """A clinician's request for blood. Patient fields stay here and are never sent to suppliers or the model."""
+
+    requesting_facility_id = models.CharField(max_length=16)
+    raised_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    patient_blood_group = models.CharField(max_length=8, choices=PATIENT_GROUP_CHOICES)
+    component = models.CharField(max_length=4, choices=Component.choices)
+    units_requested = models.PositiveSmallIntegerField()
+    urgency = models.CharField(max_length=20, choices=Urgency.choices)
+    clinical_note = models.CharField(max_length=500, blank=True)
+    status = models.CharField(max_length=32, choices=Status.choices, default=Status.RAISED)
+    # Groups the rules engine allowed, and any warnings shown to the officer (e.g. unknown group).
+    compatible_groups = models.JSONField(default=list)
+    warnings = models.JSONField(default=list)
+    # "model" or "fallback" — how the ETAs were produced. Drives the "AI offline" banner.
+    eta_method = models.CharField(max_length=10, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"#{self.pk} {self.component} {self.patient_blood_group} x{self.units_requested} ({self.status})"
+
+
+class RankedOption(models.Model):
+    """One supplying site offered to the blood bank officer, saved at matching time so GET is read-only."""
+
+    request = models.ForeignKey(EmergencyRequest, on_delete=models.CASCADE, related_name="options")
+    rank = models.PositiveSmallIntegerField()
+    facility_id = models.CharField(max_length=16)
+    facility_name = models.CharField(max_length=200)
+    eta_low_min = models.FloatField()
+    eta_mid_min = models.FloatField()
+    eta_high_min = models.FloatField()
+    method = models.CharField(max_length=10)          # model | fallback
+    reason = models.TextField()
+    warnings = models.JSONField(default=list)
+    units_available = models.PositiveIntegerField()
+    is_partial = models.BooleanField(default=False)   # site has fewer units than requested
+    unit_ids = models.JSONField(default=list)         # units the rules engine would send, in pick order
+    blood_groups = models.JSONField(default=list)     # groups of those units
+
+    class Meta:
+        ordering = ["request", "rank"]
+        constraints = [models.UniqueConstraint(fields=["request", "rank"], name="uniq_option_rank")]
+
+
+class UnitHold(models.Model):
+    """
+    A unit reserved for a request. Active while released_at is empty.
+    A unit can only have one active hold at a time (enforced by the database).
+    """
+
+    request = models.ForeignKey(EmergencyRequest, on_delete=models.CASCADE, related_name="holds")
+    option = models.ForeignKey(RankedOption, on_delete=models.CASCADE, related_name="holds")
+    unit_id = models.CharField(max_length=40)
+    facility_id = models.CharField(max_length=16)
+    held_at = models.DateTimeField(auto_now_add=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+    release_reason = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["unit_id"], condition=models.Q(released_at__isnull=True), name="one_active_hold_per_unit"
+            )
+        ]
