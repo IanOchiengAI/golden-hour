@@ -42,6 +42,7 @@ export interface EmergencyRequest {
   created_at: string
   updated_at?: string
   held_option_id?: number
+  dispatch_id?: number
   authorisation_route?: 'standing' | 'per_transfer'
   decision_due_at?: string
 }
