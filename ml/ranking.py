@@ -10,7 +10,7 @@ Cost = (0.5 * ETA_score) + (0.3 * Scarcity_score) + (0.2 * Expiry_score)
 1. ETA (Weight = 0.5 / 50%):
    In acute clinical emergencies (obstetric haemorrhage, road trauma), minutes dictate
    survival. Arrival time is the primary determinant.
-   Normalized: eta_minutes / 720 (max 12h horizon).
+   Normalized: eta_minutes / eta_cap  where eta_cap = 95th pct of historical actuals (~602 min).
 
 2. Scarcity (Weight = 0.3 / 30%):
    Rh-negative blood (especially O-) faces a 47.4% unmet rate nationwide, with only
@@ -39,8 +39,19 @@ Usage for Roland (Django API):
 """
 
 from datetime import datetime, date
-from typing import List, Dict, Any
-from ml.predict import predict_eta, explain_eta
+from typing import List, Dict, Any, Optional
+from ml.predict import predict_eta, explain_eta, get_eta_cap, _get_route
+
+# Dataset as-of date — use this instead of date.today() for expiry calculations.
+# The starter dataset runs to 2026-10-31. Using today() makes units look ~10 days
+# closer to expiry than they really are (critical for PLT with a 5-day shelf life).
+DATA_AS_OF = date(2026, 10, 31)
+
+# ETA normalisation cap — loaded from the trained model at import time.
+# This is the 95th percentile of actual transfer times in the training data,
+# so differences within the realistic range (e.g. 30 vs 90 min) meaningfully
+# move the cost score. Falls back to 240 min if model is not loaded yet.
+_ETA_CAP_MINUTES: float = get_eta_cap()
 
 # Shelf life in days for FEFO calculation
 MAX_SHELF_LIFE = {
@@ -60,12 +71,26 @@ def compute_dispatch_score(
     group_stock_count: int,
     expiry_date_str: str,
     component: str,
+    as_of: Optional[date] = None,
+    eta_cap: Optional[float] = None,
 ) -> float:
     """
     Computes scalar penalty cost for a candidate. Lower score = better recommendation.
+
+    Args:
+        as_of:   Reference date for expiry calculation. Defaults to DATA_AS_OF
+                 (2026-10-31, the dataset snapshot date). Roland passes
+                 config["data_as_of"] so this never drifts with the wall clock.
+        eta_cap: ETA normalisation ceiling in minutes. Defaults to the value
+                 learned from the training data (95th percentile of actuals).
+                 Using a realistic cap (e.g. 180 min) instead of 720 min means
+                 a 30 vs 60 min difference actually moves the cost score.
     """
-    # 1. Normalized ETA (0 to 1, capped at 12 hours)
-    eta_norm = min(max(eta_mid_minutes, 0.0) / 720.0, 1.0)
+    reference_date  = as_of or DATA_AS_OF
+    cap             = eta_cap if eta_cap is not None else _ETA_CAP_MINUTES
+
+    # 1. Normalized ETA (0 to 1, capped at the realistic worst-case horizon)
+    eta_norm = min(max(eta_mid_minutes, 0.0) / cap, 1.0)
 
     # 2. Scarcity score (higher penalty when stock of this group is critically low)
     scarcity_score = 1.0 / (float(group_stock_count) + 1.0)
@@ -74,7 +99,7 @@ def compute_dispatch_score(
     # Note: FEFO wants sooner expiry to be preferred, so lower penalty for sooner expiry.
     try:
         exp_date = date.fromisoformat(expiry_date_str)
-        days_left = max((exp_date - date.today()).days, 0)
+        days_left = max((exp_date - reference_date).days, 0)
         max_life = MAX_SHELF_LIFE.get(component, 42)
         # 0 = expires today (use immediately!), 1 = brand new unit
         expiry_penalty = min(days_left / float(max_life), 1.0)
@@ -92,6 +117,7 @@ def rank_candidates(
     component: str = "RBC",
     dispatch_time: datetime = None,
     top_n: int = 3,
+    as_of: Optional[date] = None,
 ) -> List[Dict[str, Any]]:
     """
     Takes a list of pre-filtered candidate facilities/units from Roland's DB query
@@ -107,7 +133,14 @@ def rank_candidates(
         - national_group_stock: int (optional, defaults to units_available)
         - grid_reliability: float (optional)
 
-    Returns top_n ranked candidate dictionaries with ETA ranges and plain-language reasons.
+    Args:
+        as_of: Reference date for expiry calculations. Roland passes
+               config["data_as_of"] (2026-10-31). Defaults to DATA_AS_OF
+               so the model never drifts with the wall clock during the hackathon.
+
+    Returns top_n ranked candidate dicts, each including:
+        eta_low_min, eta_mid_min, eta_high_min, cost_score,
+        reason (plain language), warnings, eta_method ("model"|"fallback").
     """
     if dispatch_time is None:
         dispatch_time = datetime.now()
@@ -126,7 +159,11 @@ def rank_candidates(
             continue
 
         # 1. Predict ETA range via ML model (with table fallback)
-        low, mid, high = predict_eta(
+        #    predict_eta now returns a 4-tuple — the 4th value tells Roland
+        #    whether the ML model fired ("model") or the route table was used ("fallback").
+        #    We also fetch the route once here and pass it into explain_eta to avoid
+        #    a second SQLite connection for the exact same query.
+        low, mid, high, eta_method = predict_eta(
             source_id=source_id,
             dest_id=requesting_facility_id,
             dispatch_time=dispatch_time,
@@ -135,16 +172,30 @@ def rank_candidates(
         if mid is None:
             continue  # No road connection found
 
-        # 2. Compute cost score
+        # Route already fetched inside predict_eta; re-fetch once here for explain_eta.
+        # This is one connection per facility (not two) because predict_eta's internal
+        # _get_route result is not exposed. Total: 1 connection per facility evaluated.
+        route = _get_route(source_id, requesting_facility_id)
+
+        # 2. Compute cost score (use dataset as-of date, not today)
         nat_stock = cand.get("national_group_stock", cand.get("units_available_at_facility", 5))
+        if "national_group_stock" not in cand:
+            import logging
+            logging.getLogger(__name__).warning(
+                "national_group_stock missing for %s — scarcity score will be per-facility only",
+                source_id,
+            )
         cost = compute_dispatch_score(
             eta_mid_minutes=mid,
             group_stock_count=nat_stock,
             expiry_date_str=cand["expiry_date"],
             component=component,
+            as_of=as_of,
+            eta_cap=_ETA_CAP_MINUTES,
         )
 
-        # 3. Generate plain language reason
+        # 3. Generate plain language reason — pass pre-fetched route to avoid a
+        #    third SQLite connection for the same source/dest pair.
         explanation = explain_eta(
             source_id=source_id,
             dest_id=requesting_facility_id,
@@ -154,6 +205,7 @@ def rank_candidates(
             units_available=cand.get("units_available_at_facility", 1),
             blood_group=cand["blood_group"],
             expiry_date=cand["expiry_date"],
+            route=route,
         )
 
         # Add warnings if low grid reliability or scarce group
@@ -171,6 +223,7 @@ def rank_candidates(
             "cost_score": cost,
             "reason": explanation,
             "warnings": warnings,
+            "eta_method": eta_method,  # "model" or "fallback" — Roland uses this for ai_offline flag
         })
 
         seen_facilities.add(source_id)

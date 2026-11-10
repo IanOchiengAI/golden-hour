@@ -7,21 +7,30 @@ Ian owns this file.
 Usage:
     from ml.predict import predict_eta
 
-    low, mid, high = predict_eta("RBTC-NBO", "HSP-012", datetime.now())
-    # → (35.2, 48.7, 71.4)  — minutes
+    low, mid, high, method = predict_eta("RBTC-NBO", "HSP-012", datetime.now())
+    # → (35.2, 48.7, 71.4, "model")   — ML model used
+    # → (38.4, 48.0, 57.6, "fallback") — table lookup used
     # → "ETA 49 min (35–71 min range)"
+
+Returns a 4-tuple: (low, mid, high, method)
+  method = "model"    — ML prediction used
+  method = "fallback" — routes.typical_travel_hours ±20% used (model offline or error)
 
 If the model file is missing or the route is unknown, falls back to the
 routes.typical_travel_hours table lookup (with ±20% uncertainty).
 """
 
+import logging
 import os
 import pickle
 import sqlite3
+import threading
 from datetime import datetime
-from typing import Tuple
+from typing import Tuple, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────
 _HERE     = os.path.dirname(os.path.abspath(__file__))
@@ -48,16 +57,30 @@ FEATURE_COLS = [
     "connectivity_enc",
 ]
 
-# ── Lazy model cache (loaded once, reused) ────────────────────────────────
+# ── Lazy model cache (loaded once, reused across all Django threads) ──────────
 _model_cache = None
+_model_lock  = threading.Lock()
 
 
-def _load_model():
+def _load_model() -> dict:
+    """
+    Load the full model payload from disk, cached after first call.
+    Thread-safe: double-checked locking prevents duplicate loads under
+    concurrent Django worker threads.
+    """
     global _model_cache
     if _model_cache is None:
-        with open(MODEL_PATH, "rb") as f:
-            _model_cache = pickle.load(f)
-    return _model_cache["rf"]
+        with _model_lock:
+            if _model_cache is None:   # second check inside the lock
+                with open(MODEL_PATH, "rb") as f:
+                    _model_cache = pickle.load(f)
+                logger.info(
+                    "ETA model loaded — MAE %.1f min, coverage %.1f%%, cap %.0f min",
+                    _model_cache["metrics"]["model_mae"],
+                    _model_cache["metrics"]["interval_coverage_pct"],
+                    _model_cache.get("eta_cap", 240.0),
+                )
+    return _model_cache
 
 
 def _get_route(source_id: str, dest_id: str) -> dict | None:
@@ -77,15 +100,15 @@ def _get_route(source_id: str, dest_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def _fallback(typical_travel_hours: float) -> Tuple[float, float, float]:
+def _fallback(typical_travel_hours: float) -> Tuple[float, float, float, str]:
     """
     Fallback when model is offline or route unknown.
-    Returns table value ±20% as the uncertainty range.
+    Returns table value ±20% as the uncertainty range, plus method="fallback".
     """
     mid  = typical_travel_hours * 60
     low  = mid * 0.80
     high = mid * 1.20
-    return round(low, 1), round(mid, 1), round(high, 1)
+    return round(low, 1), round(mid, 1), round(high, 1), "fallback"
 
 
 def predict_eta(
@@ -93,9 +116,9 @@ def predict_eta(
     dest_id: str,
     dispatch_time: datetime,
     transport_mode: str = "vehicle",
-) -> Tuple[float, float, float]:
+) -> Tuple[float, float, float, str]:
     """
-    Predict blood transfer ETA as a (low, mid, high) range in minutes.
+    Predict blood transfer ETA as a (low, mid, high, method) tuple.
 
     Args:
         source_id      : facility_id of the supplying facility (e.g. "RBTC-NBO")
@@ -104,7 +127,11 @@ def predict_eta(
         transport_mode : "vehicle" | "motorbike" | "public_service_vehicle"
 
     Returns:
-        (low, mid, high) in minutes — e.g. (35.2, 48.7, 71.4)
+        (low, mid, high, method) where:
+          - low/mid/high are in minutes (e.g. 35.2, 48.7, 71.4)
+          - method is "model" if the ML model was used, "fallback" if the
+            routes table was used (Roland uses this to set ai_offline flag)
+        Returns (None, None, None, None) if no road route exists.
 
     Falls back to routes.typical_travel_hours ±20% if:
         - Model file not found (not yet trained)
@@ -116,11 +143,14 @@ def predict_eta(
 
     if route is None:
         # No road route found — cannot dispatch via road
-        return (None, None, None)
+        return (None, None, None, None)
 
     # ── 2. Try the ML model ───────────────────────────────────────────────
     try:
-        rf = _load_model()
+        payload = _load_model()
+        rf      = payload["rf"]
+        q05     = payload["q05"]   # conformal lower offset (usually negative)
+        q95     = payload["q95"]   # conformal upper offset (usually positive)
 
         X = np.array([[
             route["road_km"],
@@ -131,18 +161,52 @@ def predict_eta(
             CONNECTIVITY_ENC.get(route["connectivity"], 1),
         ]])
 
-        # Get individual tree predictions for the uncertainty range
-        # Using 5th–95th percentile for an honest wide range
-        tree_preds = np.array([tree.predict(X)[0] for tree in rf.estimators_])
-        low  = float(np.percentile(tree_preds, 5))
-        mid  = float(np.percentile(tree_preds, 50))
-        high = float(np.percentile(tree_preds, 95))
+        # Point prediction (median)
+        mid = float(rf.predict(X)[0])
 
-        return round(max(low, 1), 1), round(mid, 1), round(high, 1)
+        # Conformal prediction interval — calibrated on a held-out set so that
+        # ~90% of real outcomes fall inside [low, high].
+        # low  = mid + q05  (q05 is a negative offset: model tends to over-predict by this)
+        # high = mid + q95
+        low  = mid + q05
+        high = mid + q95
+
+        # Safety floor: low ≥ 1 min, high > low
+        low  = max(low, 1.0)
+        high = max(high, low + 1.0)
+
+        return round(low, 1), round(mid, 1), round(high, 1), "model"
 
     except Exception:
-        # Model offline or error — fall back to table lookup silently
+        # Model offline or error — fall back to table lookup
         return _fallback(route["typical_travel_hours"])
+
+
+def get_eta_cap() -> float:
+    """
+    Return the ETA normalisation cap in minutes (95th percentile of training actuals).
+    Used by ranking.py so the cost function reflects the realistic worst-case,
+    not an arbitrary 12-hour ceiling.
+    Falls back to 240 min (4 h) if the model is not loaded.
+    """
+    try:
+        payload = _load_model()
+        return payload.get("eta_cap", 240.0)
+    except Exception:
+        return 240.0
+
+
+def _fmt_minutes(minutes: float) -> str:
+    """
+    Format a duration in minutes for human reading.
+    Under 2 hours → "49 min".  2 hours or more → "7h 16min".
+    Officers in northern Kenya deal with 400+ min routes; "436 min" is unreadable.
+    """
+    m = int(round(minutes))
+    if m < 120:
+        return f"{m} min"
+    h, rem = divmod(m, 60)
+    return f"{h}h {rem:02d}min"
 
 
 def explain_eta(
@@ -154,19 +218,27 @@ def explain_eta(
     units_available: int,
     blood_group: str,
     expiry_date: str,
+    route: Optional[dict] = None,
 ) -> str:
     """
     Generate a plain-language explanation for the officer screen.
 
+    Args:
+        route: Pre-fetched route dict from _get_route(). Pass this in from
+               rank_candidates to avoid opening a second SQLite connection
+               for the same source/dest pair. If omitted, looked up fresh.
+
     Example output:
         "ETA ~49 min (35–71 min range) · 11 km road · 3 units O− available · expires 2026-11-14"
+        "ETA ~7h 16min (6h 44min–7h 48min range) · 320 km poor road · 2 units O− available · expires 2026-11-20"
     """
-    route = _get_route(source_id, dest_id)
+    if route is None:
+        route = _get_route(source_id, dest_id)
     if not route:
         return f"{units_available} unit(s) {blood_group} available · route unknown"
 
     return (
-        f"ETA ~{mid:.0f} min ({low:.0f}–{high:.0f} min range) · "
+        f"ETA ~{_fmt_minutes(mid)} ({_fmt_minutes(low)}–{_fmt_minutes(high)} range) · "
         f"{route['road_km']:.0f} km {route['road_quality']} road · "
         f"{units_available} unit(s) {blood_group} available · "
         f"expires {expiry_date}"
@@ -185,9 +257,9 @@ if __name__ == "__main__":
     print("predict_eta() test — model must be trained first (run train_eta.py)")
     print()
     for source, dest, label in test_cases:
-        low, mid, high = predict_eta(source, dest, datetime.now())
+        low, mid, high, method = predict_eta(source, dest, datetime.now())
         if mid:
-            print(f"  {label}")
+            print(f"  {label}  [{method}]")
             print(f"    → {low:.0f}–{mid:.0f}–{high:.0f} min")
             print(f"    → {explain_eta(source, dest, low, mid, high, 3, 'O-', '2026-11-14')}")
         else:
