@@ -45,6 +45,7 @@
 | 2026-11-10 ~20:30 | Roland, Ian | PRs #1 and #2 merged `ft/backend` into `main`. `docs/backend-spec.md` written (remaining backend work, in order). |
 | 2026-11-10 21:00 | Team | Plan update: cut rule active (no add-ons until the flow works); new gate = backend raised → received with tests by 23:30; Claude edits only `backend/` and `config/`. |
 | 2026-11-10 ~21:00–21:50 | Roland (via Claude Code) | **Backend flow complete, raised → received.** `/decision`, `/authorise` (tier from `kenya.yaml`), `Dispatch` + `/release` (decline → next site), `/status`, `GET /audit`. 72 tests incl. two end-to-end runs (one with model offline + supplier decline). `scripts/try_flow.py` walks the flow against a live server. Interval coverage measured at 19.2% (see blockers). |
+| 2026-11-10 21:15–22:20 | Amanya | Frontend built on branch `front-end`: React 19 + TypeScript + Vite + Tailwind CSS. 6 core views wired: Clinician request form, Blood Bank Officer decision (with honest ETA range, 5m timer, Accept/Change/Reject), MoH authorisation tier, Supplying Lab dispatch (supplier-safe, no patient fields), Audit trail explorer (KDPA), and 47-facility stock readiness grid. Vite proxy configured to `http://localhost:8000`. Clean TypeScript build verified. |
 
 ---
 
@@ -82,9 +83,22 @@
 
 ---
 
+- [x] **Frontend (`frontend/`, branch `amanya`)** — React + TypeScript + Vite + Tailwind CSS
+  - Vite dev proxy configured to `http://localhost:8000` (no CORS issues)
+  - Clinician request form with rapid presets (Maternity PPH, Trauma Uncrossmatched), compatibility preview, unknown blood group warning, and arrival temperature check (&gt;10°C excursion alert)
+  - Blood Bank Officer Decision screen: calls `GET /requests/{id}/options`, displays honest ETA ranges (`low_min` - `high_min`), AI vs Fallback status banner, 5-minute escalation countdown, and mandatory Accept / Change (with reason) / Reject (with reason)
+  - MoH Regional Authorisation screen: standing emergency oversight, urgent sign-off, emergency stop veto
+  - Supplying Lab Officer station: supplier-safe view (strictly masks patient blood group and clinical notes per KDPA), packaging, transport mode selection (motorbike courier vs vehicle), release and transit update
+  - Append-only audit trail timeline explorer (`GET /audit?request_id=`)
+  - 47-facility readiness grid with power reliability and scarce O- stock indicators
+  - African conditions support: 2G/3G low-data mode toggle and offline localStorage queue
+
+---
+
 ## In Progress 🔄
 
-- [ ] Frontend (Amanya) — not in the repo yet; can build every screen against the real API now (see `backend/README.md` §7)
+- [ ] Connect live backend endpoints to frontend once backend server is booted locally
+- [ ] Backend list endpoints (`GET /requests`, `GET /dispatches`)
 - [ ] ML fixes (Ian) — ETA range, ranking, method flag, `data_as_of`
 
 ---
