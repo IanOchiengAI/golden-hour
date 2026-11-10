@@ -7,9 +7,14 @@ Ian owns this file.
 Usage:
     from ml.predict import predict_eta
 
-    low, mid, high = predict_eta("RBTC-NBO", "HSP-012", datetime.now())
-    # → (35.2, 48.7, 71.4)  — minutes
+    low, mid, high, method = predict_eta("RBTC-NBO", "HSP-012", datetime.now())
+    # → (35.2, 48.7, 71.4, "model")   — ML model used
+    # → (38.4, 48.0, 57.6, "fallback") — table lookup used
     # → "ETA 49 min (35–71 min range)"
+
+Returns a 4-tuple: (low, mid, high, method)
+  method = "model"    — ML prediction used
+  method = "fallback" — routes.typical_travel_hours ±20% used (model offline or error)
 
 If the model file is missing or the route is unknown, falls back to the
 routes.typical_travel_hours table lookup (with ±20% uncertainty).
@@ -77,15 +82,15 @@ def _get_route(source_id: str, dest_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def _fallback(typical_travel_hours: float) -> Tuple[float, float, float]:
+def _fallback(typical_travel_hours: float) -> Tuple[float, float, float, str]:
     """
     Fallback when model is offline or route unknown.
-    Returns table value ±20% as the uncertainty range.
+    Returns table value ±20% as the uncertainty range, plus method="fallback".
     """
     mid  = typical_travel_hours * 60
     low  = mid * 0.80
     high = mid * 1.20
-    return round(low, 1), round(mid, 1), round(high, 1)
+    return round(low, 1), round(mid, 1), round(high, 1), "fallback"
 
 
 def predict_eta(
@@ -93,9 +98,9 @@ def predict_eta(
     dest_id: str,
     dispatch_time: datetime,
     transport_mode: str = "vehicle",
-) -> Tuple[float, float, float]:
+) -> Tuple[float, float, float, str]:
     """
-    Predict blood transfer ETA as a (low, mid, high) range in minutes.
+    Predict blood transfer ETA as a (low, mid, high, method) tuple.
 
     Args:
         source_id      : facility_id of the supplying facility (e.g. "RBTC-NBO")
@@ -104,7 +109,11 @@ def predict_eta(
         transport_mode : "vehicle" | "motorbike" | "public_service_vehicle"
 
     Returns:
-        (low, mid, high) in minutes — e.g. (35.2, 48.7, 71.4)
+        (low, mid, high, method) where:
+          - low/mid/high are in minutes (e.g. 35.2, 48.7, 71.4)
+          - method is "model" if the ML model was used, "fallback" if the
+            routes table was used (Roland uses this to set ai_offline flag)
+        Returns (None, None, None, None) if no road route exists.
 
     Falls back to routes.typical_travel_hours ±20% if:
         - Model file not found (not yet trained)
@@ -116,7 +125,7 @@ def predict_eta(
 
     if route is None:
         # No road route found — cannot dispatch via road
-        return (None, None, None)
+        return (None, None, None, None)
 
     # ── 2. Try the ML model ───────────────────────────────────────────────
     try:
@@ -138,10 +147,10 @@ def predict_eta(
         mid  = float(np.percentile(tree_preds, 50))
         high = float(np.percentile(tree_preds, 95))
 
-        return round(max(low, 1), 1), round(mid, 1), round(high, 1)
+        return round(max(low, 1), 1), round(mid, 1), round(high, 1), "model"
 
     except Exception:
-        # Model offline or error — fall back to table lookup silently
+        # Model offline or error — fall back to table lookup
         return _fallback(route["typical_travel_hours"])
 
 
@@ -185,9 +194,9 @@ if __name__ == "__main__":
     print("predict_eta() test — model must be trained first (run train_eta.py)")
     print()
     for source, dest, label in test_cases:
-        low, mid, high = predict_eta(source, dest, datetime.now())
+        low, mid, high, method = predict_eta(source, dest, datetime.now())
         if mid:
-            print(f"  {label}")
+            print(f"  {label}  [{method}]")
             print(f"    → {low:.0f}–{mid:.0f}–{high:.0f} min")
             print(f"    → {explain_eta(source, dest, low, mid, high, 3, 'O-', '2026-11-14')}")
         else:

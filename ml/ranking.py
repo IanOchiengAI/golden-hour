@@ -39,8 +39,13 @@ Usage for Roland (Django API):
 """
 
 from datetime import datetime, date
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from ml.predict import predict_eta, explain_eta
+
+# Dataset as-of date — use this instead of date.today() for expiry calculations.
+# The starter dataset runs to 2026-10-31. Using today() makes units look ~10 days
+# closer to expiry than they really are (critical for PLT with a 5-day shelf life).
+DATA_AS_OF = date(2026, 10, 31)
 
 # Shelf life in days for FEFO calculation
 MAX_SHELF_LIFE = {
@@ -60,10 +65,18 @@ def compute_dispatch_score(
     group_stock_count: int,
     expiry_date_str: str,
     component: str,
+    as_of: Optional[date] = None,
 ) -> float:
     """
     Computes scalar penalty cost for a candidate. Lower score = better recommendation.
+
+    Args:
+        as_of: Reference date for expiry calculation. Defaults to DATA_AS_OF
+               (2026-10-31, the dataset snapshot date). Roland passes
+               config["data_as_of"] so this never drifts with the wall clock.
     """
+    reference_date = as_of or DATA_AS_OF
+
     # 1. Normalized ETA (0 to 1, capped at 12 hours)
     eta_norm = min(max(eta_mid_minutes, 0.0) / 720.0, 1.0)
 
@@ -74,7 +87,7 @@ def compute_dispatch_score(
     # Note: FEFO wants sooner expiry to be preferred, so lower penalty for sooner expiry.
     try:
         exp_date = date.fromisoformat(expiry_date_str)
-        days_left = max((exp_date - date.today()).days, 0)
+        days_left = max((exp_date - reference_date).days, 0)
         max_life = MAX_SHELF_LIFE.get(component, 42)
         # 0 = expires today (use immediately!), 1 = brand new unit
         expiry_penalty = min(days_left / float(max_life), 1.0)
@@ -92,6 +105,7 @@ def rank_candidates(
     component: str = "RBC",
     dispatch_time: datetime = None,
     top_n: int = 3,
+    as_of: Optional[date] = None,
 ) -> List[Dict[str, Any]]:
     """
     Takes a list of pre-filtered candidate facilities/units from Roland's DB query
@@ -107,7 +121,14 @@ def rank_candidates(
         - national_group_stock: int (optional, defaults to units_available)
         - grid_reliability: float (optional)
 
-    Returns top_n ranked candidate dictionaries with ETA ranges and plain-language reasons.
+    Args:
+        as_of: Reference date for expiry calculations. Roland passes
+               config["data_as_of"] (2026-10-31). Defaults to DATA_AS_OF
+               so the model never drifts with the wall clock during the hackathon.
+
+    Returns top_n ranked candidate dicts, each including:
+        eta_low_min, eta_mid_min, eta_high_min, cost_score,
+        reason (plain language), warnings, eta_method ("model"|"fallback").
     """
     if dispatch_time is None:
         dispatch_time = datetime.now()
@@ -126,7 +147,9 @@ def rank_candidates(
             continue
 
         # 1. Predict ETA range via ML model (with table fallback)
-        low, mid, high = predict_eta(
+        #    predict_eta now returns a 4-tuple — the 4th value tells Roland
+        #    whether the ML model fired ("model") or the route table was used ("fallback").
+        low, mid, high, eta_method = predict_eta(
             source_id=source_id,
             dest_id=requesting_facility_id,
             dispatch_time=dispatch_time,
@@ -135,13 +158,14 @@ def rank_candidates(
         if mid is None:
             continue  # No road connection found
 
-        # 2. Compute cost score
+        # 2. Compute cost score (use dataset as-of date, not today)
         nat_stock = cand.get("national_group_stock", cand.get("units_available_at_facility", 5))
         cost = compute_dispatch_score(
             eta_mid_minutes=mid,
             group_stock_count=nat_stock,
             expiry_date_str=cand["expiry_date"],
             component=component,
+            as_of=as_of,
         )
 
         # 3. Generate plain language reason
@@ -171,6 +195,7 @@ def rank_candidates(
             "cost_score": cost,
             "reason": explanation,
             "warnings": warnings,
+            "eta_method": eta_method,  # "model" or "fallback" — Roland uses this for ai_offline flag
         })
 
         seen_facilities.add(source_id)
