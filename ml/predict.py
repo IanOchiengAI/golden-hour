@@ -20,13 +20,17 @@ If the model file is missing or the route is unknown, falls back to the
 routes.typical_travel_hours table lookup (with ±20% uncertainty).
 """
 
+import logging
 import os
 import pickle
 import sqlite3
+import threading
 from datetime import datetime
-from typing import Tuple
+from typing import Tuple, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────
 _HERE     = os.path.dirname(os.path.abspath(__file__))
@@ -53,16 +57,29 @@ FEATURE_COLS = [
     "connectivity_enc",
 ]
 
-# ── Lazy model cache (loaded once, reused) ────────────────────────────────
+# ── Lazy model cache (loaded once, reused across all Django threads) ──────────
 _model_cache = None
+_model_lock  = threading.Lock()
 
 
 def _load_model() -> dict:
-    """Load the full model payload from disk (cached after first call)."""
+    """
+    Load the full model payload from disk, cached after first call.
+    Thread-safe: double-checked locking prevents duplicate loads under
+    concurrent Django worker threads.
+    """
     global _model_cache
     if _model_cache is None:
-        with open(MODEL_PATH, "rb") as f:
-            _model_cache = pickle.load(f)
+        with _model_lock:
+            if _model_cache is None:   # second check inside the lock
+                with open(MODEL_PATH, "rb") as f:
+                    _model_cache = pickle.load(f)
+                logger.info(
+                    "ETA model loaded — MAE %.1f min, coverage %.1f%%, cap %.0f min",
+                    _model_cache["metrics"]["model_mae"],
+                    _model_cache["metrics"]["interval_coverage_pct"],
+                    _model_cache.get("eta_cap", 240.0),
+                )
     return _model_cache
 
 
@@ -179,6 +196,19 @@ def get_eta_cap() -> float:
         return 240.0
 
 
+def _fmt_minutes(minutes: float) -> str:
+    """
+    Format a duration in minutes for human reading.
+    Under 2 hours → "49 min".  2 hours or more → "7h 16min".
+    Officers in northern Kenya deal with 400+ min routes; "436 min" is unreadable.
+    """
+    m = int(round(minutes))
+    if m < 120:
+        return f"{m} min"
+    h, rem = divmod(m, 60)
+    return f"{h}h {rem:02d}min"
+
+
 def explain_eta(
     source_id: str,
     dest_id: str,
@@ -188,19 +218,27 @@ def explain_eta(
     units_available: int,
     blood_group: str,
     expiry_date: str,
+    route: Optional[dict] = None,
 ) -> str:
     """
     Generate a plain-language explanation for the officer screen.
 
+    Args:
+        route: Pre-fetched route dict from _get_route(). Pass this in from
+               rank_candidates to avoid opening a second SQLite connection
+               for the same source/dest pair. If omitted, looked up fresh.
+
     Example output:
         "ETA ~49 min (35–71 min range) · 11 km road · 3 units O− available · expires 2026-11-14"
+        "ETA ~7h 16min (6h 44min–7h 48min range) · 320 km poor road · 2 units O− available · expires 2026-11-20"
     """
-    route = _get_route(source_id, dest_id)
+    if route is None:
+        route = _get_route(source_id, dest_id)
     if not route:
         return f"{units_available} unit(s) {blood_group} available · route unknown"
 
     return (
-        f"ETA ~{mid:.0f} min ({low:.0f}–{high:.0f} min range) · "
+        f"ETA ~{_fmt_minutes(mid)} ({_fmt_minutes(low)}–{_fmt_minutes(high)} range) · "
         f"{route['road_km']:.0f} km {route['road_quality']} road · "
         f"{units_available} unit(s) {blood_group} available · "
         f"expires {expiry_date}"

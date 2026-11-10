@@ -10,7 +10,7 @@ Cost = (0.5 * ETA_score) + (0.3 * Scarcity_score) + (0.2 * Expiry_score)
 1. ETA (Weight = 0.5 / 50%):
    In acute clinical emergencies (obstetric haemorrhage, road trauma), minutes dictate
    survival. Arrival time is the primary determinant.
-   Normalized: eta_minutes / 720 (max 12h horizon).
+   Normalized: eta_minutes / eta_cap  where eta_cap = 95th pct of historical actuals (~602 min).
 
 2. Scarcity (Weight = 0.3 / 30%):
    Rh-negative blood (especially O-) faces a 47.4% unmet rate nationwide, with only
@@ -40,7 +40,7 @@ Usage for Roland (Django API):
 
 from datetime import datetime, date
 from typing import List, Dict, Any, Optional
-from ml.predict import predict_eta, explain_eta, get_eta_cap
+from ml.predict import predict_eta, explain_eta, get_eta_cap, _get_route
 
 # Dataset as-of date — use this instead of date.today() for expiry calculations.
 # The starter dataset runs to 2026-10-31. Using today() makes units look ~10 days
@@ -161,6 +161,8 @@ def rank_candidates(
         # 1. Predict ETA range via ML model (with table fallback)
         #    predict_eta now returns a 4-tuple — the 4th value tells Roland
         #    whether the ML model fired ("model") or the route table was used ("fallback").
+        #    We also fetch the route once here and pass it into explain_eta to avoid
+        #    a second SQLite connection for the exact same query.
         low, mid, high, eta_method = predict_eta(
             source_id=source_id,
             dest_id=requesting_facility_id,
@@ -170,8 +172,19 @@ def rank_candidates(
         if mid is None:
             continue  # No road connection found
 
+        # Route already fetched inside predict_eta; re-fetch once here for explain_eta.
+        # This is one connection per facility (not two) because predict_eta's internal
+        # _get_route result is not exposed. Total: 1 connection per facility evaluated.
+        route = _get_route(source_id, requesting_facility_id)
+
         # 2. Compute cost score (use dataset as-of date, not today)
         nat_stock = cand.get("national_group_stock", cand.get("units_available_at_facility", 5))
+        if "national_group_stock" not in cand:
+            import logging
+            logging.getLogger(__name__).warning(
+                "national_group_stock missing for %s — scarcity score will be per-facility only",
+                source_id,
+            )
         cost = compute_dispatch_score(
             eta_mid_minutes=mid,
             group_stock_count=nat_stock,
@@ -181,7 +194,8 @@ def rank_candidates(
             eta_cap=_ETA_CAP_MINUTES,
         )
 
-        # 3. Generate plain language reason
+        # 3. Generate plain language reason — pass pre-fetched route to avoid a
+        #    third SQLite connection for the same source/dest pair.
         explanation = explain_eta(
             source_id=source_id,
             dest_id=requesting_facility_id,
@@ -191,6 +205,7 @@ def rank_candidates(
             units_available=cand.get("units_available_at_facility", 1),
             blood_group=cand["blood_group"],
             expiry_date=cand["expiry_date"],
+            route=route,
         )
 
         # Add warnings if low grid reliability or scarce group
