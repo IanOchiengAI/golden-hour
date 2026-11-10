@@ -7,10 +7,13 @@ compatible units across the 47 facilities, ranks the supplying sites with the ML
 ETA model, and holds the units at the best site straight away so the blood bank
 officer can decide.
 
-**Built so far:** login, roles, audit log, rules engine, `POST /requests`,
-`GET /requests/{id}/options`, Django admin (view-only for workflow data).
-**Not built yet:** decision, authorisation, release, dispatch status, `GET /audit`
-(see [What's next](#whats-next)).
+**Built:** the full flow from raised to received — login and roles, rules engine,
+matching with auto-hold, officer decision, MoH authorisation (standing or
+per-transfer, from config), supplier release or decline (next site held),
+transport status, audit log and `GET /audit`, work-queue lists for every screen,
+view-only Django admin. 85 tests, including two end-to-end runs (one with the
+model offline).
+**Not built yet:** escalation timers, SMS, readiness (see [What's next](#whats-next)).
 
 ---
 
@@ -104,6 +107,11 @@ python manage.py seed_demo_users
 | `backup.officer@goldenhour.health` | `blood_bank_officer` | RBTC-NBO |
 | `moh@goldenhour.health` | `moh_officer` | — |
 | `lab@goldenhour.health` | `lab_officer` | RBTC-NBO |
+| `lab.<facility id>@goldenhour.health`, e.g. `lab.hsp-001@goldenhour.health` | `lab_officer` | one per facility (47) |
+
+Only the lab officer **at the site a dispatch comes from** can release it, so a
+lab officer exists for every facility. Use the one matching the dispatch's
+`from_facility_id` (lower case).
 
 These users work for the **API only**; they cannot log in to `/admin`.
 
@@ -150,13 +158,18 @@ a request takes about 1–2 seconds.
 python manage.py test
 ```
 
-Expected: `Ran 35 tests … OK`.
+Expected: `Ran 85 tests … OK` (about 3–4 minutes).
 
 | File | Covers |
 |---|---|
 | `emergency/tests/test_rules.py` | Compatibility tables (checked against an independent antigen rule), unknown-group protocol, every unit exclusion, unit pick order, partial sites |
 | `emergency/tests/test_create_request.py` | `POST /requests`: holds, full audit trail, unknown group, no double-holding, no-stock case, model offline, ML crash, roles, input validation |
 | `emergency/tests/test_options.py` | `GET /options`: shape, ETA range order, held flag, read-only, fallback flag, roles, 404 |
+| `emergency/tests/test_shared.py` | Releasing holds, dispatched units never released, status timestamps, 409 mapping |
+| `emergency/tests/test_decision_authorise.py` | Accept / change / reject, authorisation tier from config, units-just-taken 409, MoH approve / reject / stop / review, wrong-status 409, roles, no patient fields in the dispatch |
+| `emergency/tests/test_dispatch.py` | Lab confirm (units consumed, never offered again), decline → next site, decline everywhere → handled manually, facility checks, in transit → received, warm cool box warning |
+| `emergency/tests/test_end_to_end.py` | Raised → received through the API (with MoH approval; and with the model offline plus a supplier decline), checking every status and role in `GET /audit`; audit endpoint access and errors |
+| `emergency/tests/test_lists.py` | `GET /requests` (clinician sees own hospital only, filters, bad filters, summary row, query count fixed), `GET /requests/{id}` (options + hold, 404 across hospitals), `GET /dispatches` (supplying lab and receiving clinician only, no patient fields, status filter) |
 
 A `RuntimeError: boom` traceback in the output is **expected**: one test
 deliberately crashes the ML ranker to prove the fallback works.
@@ -167,6 +180,24 @@ endpoint tests are skipped, not failed — run step 2.2 first.
 ## 5. Test the API by hand
 
 Start the server (step 3), then use a second terminal.
+
+### 5.0 Quickest: walk the whole flow with one script
+
+Works the same in PowerShell, Git Bash and macOS/Linux (standard library only):
+
+```bash
+python scripts/try_flow.py                                      # urgent: accept → MoH approves → release → in transit → received
+python scripts/try_flow.py --urgency life_threatening           # standing authorisation: no MoH approval step
+python scripts/try_flow.py --urgency life_threatening --decline # first supplier declines → next site → received
+python scripts/try_flow.py --group unknown --units 1            # unknown group → O− only, with warning
+```
+
+It prints each step (ranked options with ETA ranges, each status, whether the
+lab saw any patient fields) and ends with the audit trail from `GET /audit`.
+On Windows, if `—` or `·` print oddly, run `set PYTHONIOENCODING=utf-8` (cmd),
+`$env:PYTHONIOENCODING="utf-8"` (PowerShell) or `export PYTHONIOENCODING=utf-8` (Git Bash) first.
+
+Sections 5.1–5.3 do the first steps one call at a time.
 
 ### 5.1 Windows (PowerShell)
 
@@ -206,6 +237,8 @@ Code { Invoke-RestMethod "$B/requests/$($req.id)/options" }
 
 ### 5.2 macOS / Linux (curl + jq)
 
+Git Bash on Windows usually has no `jq`; use the script in 5.0 instead.
+
 ```bash
 B=http://127.0.0.1:8000
 login() { curl -s -X POST $B/auth/login -H 'Content-Type: application/json' \
@@ -227,15 +260,19 @@ curl -s -o /dev/null -w "%{http_code}\n" $B/requests/$ID/options          # 401
 
 ### 5.3 Check the audit trail
 
-There is no `GET /audit` endpoint yet. Use the admin (section 6) or the shell
-(replace `1` with your request id):
-
+```powershell
+# PowerShell (continuing from 5.1)
+(Invoke-RestMethod "$B/audit?request_id=$($req.id)" -Headers $O).events | Format-Table time, role, action, @{n='status';e={$_.after.status}}
+```
 ```bash
-python manage.py shell -c "from emergency.models import AuditEvent as A; [print(e.created_at.strftime('%H:%M:%S'), e.actor_role, e.action, (e.after or {}).get('status','')) for e in A.objects.filter(request_id=1)]"
+# curl
+curl -s "$B/audit?request_id=$ID" -H "$O" | jq -r '.events[] | [.time, .role, .action, (.after.status // "")] | @tsv'
 ```
 
-Expected order: `request_raised` → `status_changed Matching` → `matching_completed`
-→ `units_held` → `status_changed UnitsHeld` → `status_changed AwaitingDecision`.
+Or open the request in the admin (section 6).
+
+For a request just raised, expect: `request_raised` → `status_changed Matching` →
+`matching_completed` → `units_held` → `status_changed UnitsHeld` → `status_changed AwaitingDecision`.
 
 ## 6. Test in the Django admin
 
@@ -275,8 +312,9 @@ and is written to the audit log as `access_denied`.
 |---|---|---|
 | `400` | Invalid input | `{"field_name": ["message"]}` |
 | `401` | No token / bad token / wrong login | `{"detail": "..."}` |
-| `403` | Your role cannot call this endpoint, or your account has no facility | `{"detail": "Your role cannot perform this action."}` |
-| `404` | Request id does not exist | `{"detail": "..."}` |
+| `403` | Your role cannot call this endpoint, you are not at the right facility, or your account has no facility | `{"detail": "Your role cannot perform this action."}` |
+| `404` | Request, option or dispatch does not exist | `{"detail": "..."}` |
+| `409` | Wrong status for this action, or the chosen site's units were just reserved for another request | `{"detail": "Request 7 is SentToSupplier; 'reject' needs AwaitingDecision or Escalated."}` |
 | `429` | Too many login attempts (default 10/min) | `{"detail": "Request was throttled..."}` |
 | `503` | Starter database missing or empty | `{"detail": "... Run: python backend/scripts/build_starter_db.py"}` |
 
@@ -397,19 +435,229 @@ Response `200`:
 
 Up to `options_count` (3) options, best first.
 
+---
+
+### `GET /requests` — work queues
+
+**Roles:** `clinician` (own hospital's requests only), `blood_bank_officer`,
+`moh_officer` (all requests). Labs → `403` (they use `GET /dispatches`).
+
+| Query | Example | Notes |
+|---|---|---|
+| `status` | `?status=AwaitingDecision&status=Escalated` or `?status=AwaitingDecision,Escalated` | Any request status; unknown → `400` |
+| `urgency` | `?urgency=life_threatening` | |
+| `limit` | `?limit=20` | 1–200, default 50 |
+
+Suggested queues: officer `?status=AwaitingDecision,Escalated`; MoH
+`?status=AwaitingAuthorisation` (and `SentToSupplier` for standing-route
+requests it may stop); clinician: no filter.
+
+Response `200`, newest first:
+```json
+{"results": [{
+  "...": "same fields as POST /requests",
+  "authorisation_route": "", "status_changed_at": "2026-11-10T21:40:46+03:00",
+  "due_at": "2026-11-10T21:45:46+03:00",
+  "held_option": {"id": 1, "rank": 1, "facility_id": "HSP-001", "facility_name": "National Referral Hospital (Nairobi)",
+                  "eta": {"low_min": 46.0, "mid_min": 50.3, "high_min": 53.0}, "is_partial": false},
+  "dispatch_id": null, "dispatch_status": null
+}]}
+```
+
+`due_at` is when the officer (`AwaitingDecision`, `decision_escalation_min`) or
+MoH (`AwaitingAuthorisation`, `authorisation_escalation_min`) should act by;
+`null` in other statuses. Use it for a countdown.
+
+### `GET /requests/{id}` — status tracking
+
+Same roles and visibility; a clinician asking for another hospital's request
+gets `404`. Returns the request detail (below) plus `options` (same shape as in
+`GET /options`, with `is_held`).
+
+### `GET /dispatches` and `GET /dispatches/{id}`
+
+**Roles:** `lab_officer` (dispatches **from** their site — the lab's incoming
+work), `clinician` (dispatches **to** their hospital). Officers and MoH → `403`.
+Another site's dispatch → `404`. Same `status` and `limit` queries as above,
+with dispatch statuses (`AwaitingRelease`, `Released`, `InTransit`, `Received`,
+`Declined`, `Cancelled`).
+
+Response: `{"results": [ <dispatch object> ]}` (list) or one dispatch object
+(detail) — supplier-safe, no patient fields. Lab queue: `?status=AwaitingRelease,Released`.
+
+---
+
+### Request detail (response of the workflow actions)
+
+`/decision` and `/authorise` return the request object from `POST /requests`
+plus:
+
+```json
+{
+  "...": "same fields as POST /requests",
+  "held_option_id": 1,
+  "authorisation_route": "standing | per_transfer | \"\"",
+  "status_changed_at": "2026-11-10T21:40:54+03:00",
+  "dispatch": { "...": "dispatch object (below), or null" }
+}
+```
+
+### Dispatch object (what the supplying lab sees)
+
+**No patient fields** — no patient blood group, clinical note or warnings.
+
+```json
+{
+  "id": 4, "request_id": 3, "status": "AwaitingRelease",
+  "from_facility_id": "HSP-001", "to_facility_id": "HSP-002",
+  "to_facility_name": "Eastlands County Hospital", "component": "RBC", "units_requested": 1,
+  "unit_ids": ["U2610-NBO-053118-RBC"], "blood_groups": ["O+"], "urgency": "life_threatening",
+  "transport_mode": "", "created_at": "...", "released_at": null,
+  "in_transit_at": null, "received_at": null, "coolbox_max_temp_c": null
+}
+```
+
+Dispatch `status`: `AwaitingRelease` → `Released` → `InTransit` → `Received`,
+or `Declined` / `Cancelled`.
+
+---
+
+### `POST /requests/{id}/decision`
+
+**Role:** `blood_bank_officer`. **Allowed when** the request is `AwaitingDecision`
+or `Escalated`.
+
+| Field | Required | Values |
+|---|---|---|
+| `action` | yes | `accept`, `change`, `reject` |
+| `option_id` | for `change` | an option of this request, other than the held one |
+| `reason` | for `change` and `reject` | 3–500 characters |
+
+```json
+{"action": "change", "option_id": 2, "reason": "Rank 1 vehicle is out on another run"}
+```
+
+| Action | Result |
+|---|---|
+| `accept` | Keeps the held site, then applies the authorisation tier |
+| `change` | Moves the hold to `option_id` in one step, then applies the tier. If that site's units were just reserved for another request → `409`, and the original hold stays |
+| `reject` | Releases the hold → `HandledManually` |
+
+**Authorisation tier** (from `emergency_authorisation` in `config/kenya.yaml`):
+
+| Urgency | Setting | Result |
+|---|---|---|
+| `life_threatening` | `standing` | → `SentToSupplier`, dispatch created, MoH notified (`moh_notified` in the audit). MoH can stop it before release. |
+| anything else, or setting `per_transfer` | — | → `AwaitingAuthorisation` (MoH must approve) |
+
+Response `200`: request detail.
+
+---
+
+### `POST /requests/{id}/authorise`
+
+**Role:** `moh_officer`.
+
+| `action` | Allowed when | Result |
+|---|---|---|
+| `approve` | `AwaitingAuthorisation` | → `SentToSupplier`, dispatch created |
+| `reject` | `AwaitingAuthorisation` | Hold released → `HandledManually` |
+| `stop` | `SentToSupplier` under standing authorisation, before the lab releases | Dispatch cancelled, hold released → `HandledManually` |
+| `review` | any status, standing authorisation only | After-the-fact review; audit only, no status change |
+
+`reason` is required for `reject` and `stop`.
+
+```json
+{"action": "approve", "reason": "Within regional emergency protocol"}
+```
+
+Response `200`: request detail.
+
+---
+
+### `POST /dispatches/{id}/release`
+
+**Role:** `lab_officer` **at the supplying site** (`from_facility_id`); any other
+lab → `403`. **Allowed when** the dispatch is `AwaitingRelease`.
+
+| Field | Required | Values |
+|---|---|---|
+| `action` | yes | `confirm`, `decline` |
+| `reason` | for `decline` | 3–500 characters |
+| `transport_mode` | no | `vehicle`, `motorbike`, `public_service_vehicle` |
+
+| Action | Result |
+|---|---|
+| `confirm` | Dispatch → `Released`, request → `Dispatched`. The units are marked consumed and are never offered to another request. |
+| `decline` | Dispatch → `Declined`, hold released. The next-ranked site with all its units still free is held and the request goes back to `AwaitingDecision` — **the officer must accept again**. If no site is left → `HandledManually`. |
+
+Response `200`:
+```json
+{"dispatch": { "...": "dispatch object" }, "request_status": "Dispatched", "warnings": []}
+```
+
+---
+
+### `POST /dispatches/{id}/status`
+
+| `status` | Caller | Allowed when | Result |
+|---|---|---|---|
+| `in_transit` | `lab_officer` at the supplying site | dispatch `Released` | Dispatch and request → `InTransit` |
+| `received` | `clinician` at the requesting hospital | dispatch `InTransit` | Dispatch and request → `Received` |
+
+`received` takes an optional `coolbox_max_temp_c` (−30 to 60). Above
+`coolbox_max_temp_c` in config (10 °C), the status still becomes `Received` but
+the response warns the receiving lab:
+
+```json
+{"dispatch": {...}, "request_status": "Received",
+ "warnings": ["Cool box reached 11.2 °C (limit 10 °C) — quarantine these units and do not transfuse until the lab has checked them."]}
+```
+
+---
+
+### `GET /audit?request_id=`
+
+**Roles:** `blood_bank_officer`, `moh_officer`. Labs and clinicians are refused:
+audit events contain patient fields.
+
+Response `200`, oldest first:
+```json
+{"request_id": 3, "status": "Received", "events": [
+  {"id": 41, "time": "2026-11-10T21:40:55+03:00", "actor": "lab.hsp-001@goldenhour.health",
+   "role": "lab_officer", "action": "release_declined", "object": "dispatch:4",
+   "before": {"status": "AwaitingRelease"}, "after": {"status": "Declined", "facility_id": "HSP-001"},
+   "reason": "No courier available"}
+]}
+```
+
+Missing or non-numeric `request_id` → `400`; unknown request → `404`.
+
+Main `action` values: `request_raised`, `status_changed`, `matching_completed`,
+`units_held`, `holds_released`, `decision_accepted`, `decision_changed`,
+`decision_rejected`, `moh_notified`, `authorisation_approved`,
+`authorisation_rejected`, `authorisation_stopped`, `authorisation_reviewed`,
+`dispatch_created`, `release_confirmed`, `release_declined`,
+`cold_chain_excursion_on_arrival`, plus `login`, `login_failed`, `access_denied`.
+
+---
+
 ### Request status lifecycle
 
 ```
 Raised → Matching → UnitsHeld → AwaitingDecision (→ Escalated)
        → AwaitingAuthorisation (or straight on under standing authorisation)
        → SentToSupplier → Dispatched → InTransit → Received
-Matching → HandledManually   (no stock; later also Reject / not approved)
-DraftFromCall → Raised        (voice requests, add-on)
+Matching → HandledManually              no safe compatible stock
+AwaitingDecision → HandledManually      officer rejects
+AwaitingAuthorisation → HandledManually MoH rejects
+SentToSupplier → HandledManually        MoH stops (standing), or every site declined
+SentToSupplier → UnitsHeld → AwaitingDecision   supplier declined; next site held
+DraftFromCall → Raised                  voice requests (add-on, not built)
 ```
 
 Only these moves are allowed (`emergency/services.py: ALLOWED_TRANSITIONS`), and
-each one writes an audit event. Today a request reaches `AwaitingDecision` or
-`HandledManually`; later endpoints move it further.
+each one writes an audit event. A disallowed move returns `409`.
 
 ## 8. How matching works
 
@@ -449,9 +697,10 @@ Rules change here, not in code. Keys the backend reads:
 | Key | Use |
 |---|---|
 | `data_as_of` | Dataset "today" (2026-10-31) for expiry checks |
-| `emergency_authorisation` | `standing` or `per_transfer` (used by the authorise step, coming next) |
+| `emergency_authorisation` | `standing` (life-threatening skips MoH approval) or `per_transfer` (MoH approves every transfer) |
 | `urgency_targets_min` | Target arrival time per urgency |
-| `decision_escalation_min`, `authorisation_escalation_min` | Escalation timers (coming next) |
+| `decision_escalation_min`, `authorisation_escalation_min` | Escalation timers (not built yet) |
+| `coolbox_max_temp_c` | Cool box limit on arrival (10 °C); above it, a quarantine warning |
 | `options_count` | Ranked sites shown to the officer |
 | `ranking_shortlist` | Nearest sites sent to the model |
 | `max_units_per_request` | Input limit |
@@ -479,7 +728,7 @@ To use another country, copy the file and set `COUNTRY_CONFIG` to its path.
 | Database | File | Access | Holds |
 |---|---|---|---|
 | Starter data | `…/Starter Dataset/blood_system.sqlite` | **read-only** (`emergency/stock.py`) | facilities, routes, units, donations … |
-| App data | `backend/app.sqlite3` | Django ORM | users, requests, ranked options, unit holds, audit log |
+| App data | `backend/app.sqlite3` | Django ORM | users, requests, ranked options, unit holds, dispatches, audit log |
 
 The provided data is never modified.
 
@@ -490,6 +739,7 @@ backend/
 ├── manage.py
 ├── requirements.txt              pinned versions
 ├── scripts/build_starter_db.py   rebuilds blood_system.sqlite from the CSVs
+├── scripts/try_flow.py           walks one request raised → received against a running server
 ├── goldenhour/                   project settings and root URLs
 ├── accounts/                     users, roles, login
 │   ├── models.py                 Role, StaffProfile (role + facility)
@@ -500,11 +750,14 @@ backend/
     ├── rules.py                  rules engine (no database, no AI)
     ├── stock.py                  read-only queries on the starter data
     ├── matching.py               rules → shortlist → ML ranking or fallback
-    ├── services.py               create_request, auto-hold, status transitions
+    ├── services.py               the workflow: create_request, auto-hold, decide, authorise,
+    │                             release, update_dispatch_status, status transitions
     ├── audit.py                  record(...) — one helper for every audit event
     ├── country.py                loads config/kenya.yaml
-    ├── models.py                 EmergencyRequest, RankedOption, UnitHold, AuditEvent
-    ├── serializers.py, views.py, urls.py, admin.py
+    ├── exceptions.py             workflow conflicts → 409
+    ├── models.py                 EmergencyRequest, RankedOption, UnitHold, Dispatch, AuditEvent
+    ├── serializers.py            includes the supplier-safe dispatch serializer
+    ├── views.py, urls.py, admin.py
     └── tests/
 ```
 
@@ -515,7 +768,8 @@ backend/
 | `503` … "missing or empty" | Run `python scripts/build_starter_db.py` (step 2.2). |
 | Endpoint tests show as *skipped* | Same: build the starter database. |
 | `401` on every call | Add the header `Authorization: Token <token>` (word `Token`, a space, then the token). |
-| `403` on a call | Wrong role for that endpoint, e.g. a clinician calling `/options`. Log in as the right user. |
+| `403` on a call | Wrong role for that endpoint (e.g. a clinician calling `/options`), or the wrong facility (e.g. `lab@goldenhour.health` releasing a dispatch from HSP-001 — use `lab.hsp-001@goldenhour.health`). |
+| `409` on a call | The request or dispatch is in the wrong status for that action; the message says which status it needs. Check `GET /audit` for what happened. |
 | Demo user can't log in to `/admin` | Expected. Create a superuser (step 2.4). |
 | `404` on `/requests/` | Remove the trailing slash: `/requests`. |
 | Every response says `"eta_method": "fallback"` | Model did not load. Check `pip show scikit-learn` is **1.9.1** and `ml/eta_model.pkl` exists. |
@@ -528,11 +782,11 @@ backend/
 
 ## What's next
 
-| Endpoint | Role | Does |
+Full plan with details: [`docs/backend-spec.md`](../docs/backend-spec.md).
+
+| Item | Role | Does |
 |---|---|---|
-| `POST /requests/{id}/decision` | blood bank officer | Accept / Change (moves the hold) / Reject (releases it) |
-| `POST /requests/{id}/authorise` | MoH officer | Approve or reject; standing authorisation for life-threatening |
-| `POST /dispatches/{id}/release` | lab officer | Confirm or decline; decline holds the next-ranked site |
-| `POST /dispatches/{id}/status` | — | Dispatched → in transit → received |
-| `GET /audit?request_id=` | demo / judges | Full audit trail |
-| `GET /readiness` | manager | Add-on |
+| Escalation timers | — | Decision not made in 5 min → `Escalated`, backup officer alerted (add-on) |
+| SMS (Africa's Talking) | — | Status updates from approved templates only (add-on) |
+| `GET /readiness` | officer, MoH | Hospital × blood group readiness map (add-on) |
+| Security hardening, deployment | — | CORS, `check --deploy`, gunicorn/whitenoise |

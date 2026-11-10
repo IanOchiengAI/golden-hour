@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 class AuditEvent(models.Model):
@@ -64,6 +65,11 @@ class Component(models.TextChoices):
     FFP = "FFP", "Fresh frozen plasma"
 
 
+class AuthorisationRoute(models.TextChoices):
+    STANDING = "standing"          # MoH standing regional authorisation; MoH notified, can stop
+    PER_TRANSFER = "per_transfer"  # MoH approves before dispatch
+
+
 BLOOD_GROUPS = ["O-", "O+", "A-", "A+", "B-", "B+", "AB-", "AB+"]
 PATIENT_GROUP_CHOICES = [(g, g) for g in BLOOD_GROUPS] + [("unknown", "Unknown")]
 
@@ -84,6 +90,12 @@ class EmergencyRequest(models.Model):
     warnings = models.JSONField(default=list)
     # "model" or "fallback" — how the ETAs were produced. Drives the "AI offline" banner.
     eta_method = models.CharField(max_length=10, blank=True)
+    # When the current status started; escalation timers measure from here.
+    status_changed_at = models.DateTimeField(default=timezone.now)
+    # Which authorisation tier applied, set when the officer accepts.
+    authorisation_route = models.CharField(max_length=12, choices=AuthorisationRoute.choices, blank=True)
+    # When a decision or authorisation timer fired.
+    escalated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -127,6 +139,10 @@ class UnitHold(models.Model):
     held_at = models.DateTimeField(auto_now_add=True)
     released_at = models.DateTimeField(null=True, blank=True)
     release_reason = models.CharField(max_length=200, blank=True)
+    # Set when the units leave the supplying site. A consumed hold is never
+    # released: the starter data is read-only and still lists the unit as
+    # in_stock, so the active hold is what keeps it out of future matching.
+    consumed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -134,3 +150,59 @@ class UnitHold(models.Model):
                 fields=["unit_id"], condition=models.Q(released_at__isnull=True), name="one_active_hold_per_unit"
             )
         ]
+
+
+class DispatchStatus(models.TextChoices):
+    AWAITING_RELEASE = "AwaitingRelease"
+    RELEASED = "Released"
+    DECLINED = "Declined"
+    CANCELLED = "Cancelled"
+    IN_TRANSIT = "InTransit"
+    RECEIVED = "Received"
+
+
+class TransportMode(models.TextChoices):
+    VEHICLE = "vehicle"
+    MOTORBIKE = "motorbike"
+    PUBLIC_SERVICE_VEHICLE = "public_service_vehicle"
+
+
+OPEN_DISPATCH_STATUSES = [DispatchStatus.AWAITING_RELEASE, DispatchStatus.RELEASED, DispatchStatus.IN_TRANSIT]
+
+
+class Dispatch(models.Model):
+    """
+    One movement of units from a supplying site to the requesting hospital.
+    The supplying lab sees this, never the patient fields on the request.
+    """
+
+    request = models.ForeignKey(EmergencyRequest, on_delete=models.PROTECT, related_name="dispatches")
+    option = models.ForeignKey(RankedOption, on_delete=models.PROTECT, related_name="dispatches")
+    from_facility_id = models.CharField(max_length=16)
+    to_facility_id = models.CharField(max_length=16)
+    unit_ids = models.JSONField(default=list)
+    status = models.CharField(max_length=20, choices=DispatchStatus.choices, default=DispatchStatus.AWAITING_RELEASE)
+    transport_mode = models.CharField(max_length=24, choices=TransportMode.choices, blank=True)
+    released_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                    on_delete=models.PROTECT, related_name="+")
+    released_at = models.DateTimeField(null=True, blank=True)
+    decline_reason = models.CharField(max_length=500, blank=True)
+    in_transit_at = models.DateTimeField(null=True, blank=True)
+    received_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                    on_delete=models.PROTECT, related_name="+")
+    received_at = models.DateTimeField(null=True, blank=True)
+    coolbox_max_temp_c = models.FloatField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            # A request has at most one dispatch in progress at a time.
+            models.UniqueConstraint(
+                fields=["request"], condition=models.Q(status__in=OPEN_DISPATCH_STATUSES),
+                name="one_open_dispatch_per_request",
+            )
+        ]
+
+    def __str__(self):
+        return f"Dispatch {self.pk} {self.from_facility_id}→{self.to_facility_id} ({self.status})"

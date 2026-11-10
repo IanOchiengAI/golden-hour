@@ -32,8 +32,24 @@ class Actors:
         super().setUp()
         self.clinician = make_user("clin", Role.CLINICIAN, "HSP-002")
         self.officer = make_user("officer", Role.BLOOD_BANK_OFFICER, "RBTC-NBO")
+        self.moh = make_user("moh", Role.MOH_OFFICER)
         self.clin_api = client_for(self.clinician)
         self.officer_api = client_for(self.officer)
+        self.moh_api = client_for(self.moh)
+        self._lab_apis = {}
+
+    def lab_api(self, facility_id):
+        """API client for a lab officer at the given supplying facility."""
+        if facility_id not in self._lab_apis:
+            user = make_user(f"lab-{facility_id}", Role.LAB_OFFICER, facility_id)
+            self._lab_apis[facility_id] = client_for(user)
+        return self._lab_apis[facility_id]
+
+    def decide(self, req_id, **body):
+        return self.officer_api.post(f"/requests/{req_id}/decision", body, format="json")
+
+    def authorise(self, req_id, **body):
+        return self.moh_api.post(f"/requests/{req_id}/authorise", body, format="json")
 
     def raise_request(self, **over):
         body = {"patient_blood_group": "O+", "component": "RBC", "units_requested": 2,

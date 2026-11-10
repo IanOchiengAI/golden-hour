@@ -30,6 +30,10 @@ options_count: 3
 # Nearest sites (by route table) passed to the ETA model for ranking.
 ranking_shortlist: 12
 
+# Highest safe cool box temperature during transport (°C). Above this on
+# arrival, the receiving lab is told to quarantine the units.
+coolbox_max_temp_c: 10
+
 # Upper limit on units in one request (input validation).
 max_units_per_request: 10
 

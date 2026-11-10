@@ -123,6 +123,8 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    # Workflow conflicts (wrong status, units just taken) → 409.
+    "EXCEPTION_HANDLER": "emergency.exceptions.exception_handler",
     "DEFAULT_THROTTLE_RATES": {
         "login": os.environ.get("LOGIN_THROTTLE_RATE", "10/min"),
     },
