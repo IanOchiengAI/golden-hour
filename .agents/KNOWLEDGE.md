@@ -217,6 +217,61 @@ Use these in the README, pitch, and demo:
 
 ---
 
+## 8a — Data Cleaning Decisions & Reasoning (Session 2, 2026-11-10 16:00–17:00 EAT)
+
+> This section explains not just WHAT we clean but WHY — so any team member or agent can explain it to a judge.
+
+### Where cleaning happens
+The original CSV and SQLite files are NEVER modified. All cleaning is applied in Python code at runtime — the code reads the original data and filters it in memory. This means:
+- Original data is always safe and reproducible
+- The cleaning rules are visible and auditable in the code
+- Any team member can re-run from scratch
+
+### What we clean and why
+
+#### 1. `transfers` table — 1 filter
+**What:** Remove 1,046 rows (3.0%) where `received_at IS NULL`
+**Why:** These are transfers that were dispatched but never confirmed as received. We cannot calculate how long the trip took (actual_hours = received_at - dispatched_at) if we don't know when it arrived. If we include them, the ML model either crashes or learns from blank values. Result: **34,135 clean training records.**
+
+#### 2. `units` table — 3 filters applied in sequence
+**Filter 1 — Status:** Keep only `status = 'in_stock'`
+- Why: 40,760 units (83%) are already transfused, expired, or discarded. They are not available. Including them would mean recommending blood that does not exist.
+
+**Filter 2 — Cold chain:** Keep only `temp_excursion_exposed = 0`
+- Why: 111 units are currently in stock but were exposed to temperatures outside the safe range (2–6°C for RBC). They appear available in the system but are compromised. This is exactly what happened to 2,119 patients historically — nobody filtered these out and they received potentially unsafe blood. Our system prevents this.
+- Note: The 2,119 figure is historical (already transfused). The 111 is the current live risk.
+
+**Filter 3 — Expiry:** Keep only `expiry_date > today`
+- Why: 155 units have expired but are still marked in_stock (not yet physically discarded). Dispatching expired blood is a clinical safety violation.
+
+**Result after all 3 filters: 8,400 safe, dispatchable units out of 49,426 total.**
+
+#### 3. `facilities` table — no cleaning needed
+All 47 facilities have complete data. Zero missing values across all columns (facility_id, lat, lon, connectivity, grid_reliability). The only rule: always JOIN on `facility_id`, never on `name` or `facility_name_raw` — 14% of hospital names are misspelled in the `requests` table. The facilities table itself is clean.
+
+#### 4. `requests` table — no row removal, protocol instead
+**Issue:** 442 emergency requests (5.0% of all emergency requests) have `patient_blood_group = 'unknown'`. A patient arrived unconscious or without records.
+**Why we cannot guess:** Wrong blood type triggers an immediate immune response that can kill a patient within minutes.
+**Why O− is the answer:** O− (O negative) is the universal donor — it can be given to ANY patient regardless of their blood group. When the blood group is unknown, O− is the only safe option.
+**Why we alert the officer instead of doing it automatically:**
+  1. O− is critically scarce — only 7 units of O− RBC exist across all 47 facilities as of 31 Oct 2026. Auto-dispatching O− for every unknown patient could exhaust supply and leave the next confirmed O− patient with nothing.
+  2. The rules require a human decision: the AI recommends, the officer confirms. This applies especially when recommending universal donor blood.
+**What the system does:** Surfaces O− as the recommendation with a prominent warning: *"⚠️ Patient blood group unknown — recommending O− universal donor. Confirm before dispatch."*
+
+### Verified numbers from the data
+| Metric | Number | Source |
+|---|---|---|
+| Median emergency wait time | **5.2 hours** | dataset index.html (whole process, not just transit) |
+| Median transfer transit time | **31 minutes** | transfers table (dispatched_at → received_at) |
+| Units wasted (expired or cold chain) | **23%** | dataset index.html |
+| Units transfused after excursion | **2,119** | units table (historical) |
+| O− RBC units currently safe to dispatch | **7** | units table filtered |
+| O− request unmet rate | **47.4%** | requests table |
+| Emergency requests with unknown blood group | **442 (5.0%)** | requests table |
+| Baseline ETA model MAE | **18.17 min overall; 158 min on poor roads** | transfers + routes tables |
+
+---
+
 ## 9 — Data Privacy & KDPA Compliance (From Expert Session, 2026-11-10 15:00)
 
 Notes from the blood-service expert Q&A. Required for judges on Technical Depth and African Conditions criteria.
