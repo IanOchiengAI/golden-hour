@@ -42,6 +42,7 @@
 | 2026-11-10 16:15 | Ian | Pre-build review. Tech stack NOT yet decided. No code committed. Build starts 16:30. |
 | 2026-11-10 16:30–17:16 | Ian | Full data exploration complete. All 4 cleaning rules verified against real data. ETA model trained and pushed to GitHub. |
 | 2026-11-10 ~17:30–19:20 | Roland (via Claude Code) | Backend on `ft/backend`: Django + DRF scaffold, token auth + roles, audit log, rules engine + tests, `POST /requests` (matching + auto-hold at creation), `GET /requests/{id}/options` (read-only). 35 tests pass. Found `blood_system.sqlite` committed as 0 bytes; added rebuild script. |
+| 2026-11-10 21:15–22:00 | Amanya | Frontend built on branch `amanya`: React 19 + TypeScript + Vite + Tailwind CSS. 6 core views wired: Clinician request form, Blood Bank Officer decision (with honest ETA range, 5m timer, Accept/Change/Reject), MoH authorisation tier, Supplying Lab dispatch (supplier-safe, no patient fields), Audit trail explorer (KDPA), and 47-facility stock readiness grid. Vite proxy configured to `http://localhost:8000`. Clean TypeScript build verified. |
 
 ---
 
@@ -71,9 +72,21 @@
 
 ---
 
+- [x] **Frontend (`frontend/`, branch `amanya`)** — React + TypeScript + Vite + Tailwind CSS
+  - Vite dev proxy configured to `http://localhost:8000` (no CORS issues)
+  - Clinician request form with rapid presets (Maternity PPH, Trauma Uncrossmatched), compatibility preview, unknown blood group warning, and arrival temperature check (&gt;10°C excursion alert)
+  - Blood Bank Officer Decision screen: calls `GET /requests/{id}/options`, displays honest ETA ranges (`low_min` - `high_min`), AI vs Fallback status banner, 5-minute escalation countdown, and mandatory Accept / Change (with reason) / Reject (with reason)
+  - MoH Regional Authorisation screen: standing emergency oversight, urgent sign-off, emergency stop veto
+  - Supplying Lab Officer station: supplier-safe view (strictly masks patient blood group and clinical notes per KDPA), packaging, transport mode selection (motorbike courier vs vehicle), release and transit update
+  - Append-only audit trail timeline explorer (`GET /audit?request_id=`)
+  - 47-facility readiness grid with power reliability and scarce O- stock indicators
+  - African conditions support: 2G/3G low-data mode toggle and offline localStorage queue
+
+---
+
 ## In Progress 🔄
 
-- [ ] Frontend scaffold (Amanya) — can switch `POST /requests` and `GET /options` from mocks to the real API now
+- [ ] Connect live backend endpoints to frontend once backend server is booted locally
 - [ ] Backend next: `POST /requests/{id}/decision` (Accept / Change moves hold / Reject releases), `/authorise`, `/dispatches/{id}/release`, `/dispatches/{id}/status`, `GET /audit`
 
 ---
