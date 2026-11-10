@@ -179,3 +179,57 @@ def rank_candidates(
     # Sort ascending by cost (lowest cost = best option)
     scored.sort(key=lambda x: x[0])
     return [item[1] for item in scored[:top_n]]
+
+
+# ── Quick Demo for Team Walkthrough ─────────────────────────────────────────
+if __name__ == "__main__":
+    print("=" * 65)
+    print("  GOLDEN HOUR — DISPATCH RANKING ENGINE DEMO")
+    print("  Request: HSP-002 (Eastlands) urgently needs O+ RBC")
+    print("=" * 65)
+
+    test_candidates = [
+        {
+            "facility_id": "RBTC-NBO",
+            "facility_name": "Nairobi Regional Blood Centre",
+            "unit_id": "U2610-NBO-0012",
+            "blood_group": "O+",
+            "expiry_date": "2026-11-15",
+            "units_available_at_facility": 5,
+            "grid_reliability": 0.97,
+        },
+        {
+            "facility_id": "SAT-MKS",
+            "facility_name": "Machakos Satellite Centre",
+            "unit_id": "U2610-MKS-0044",
+            "blood_group": "O+",
+            "expiry_date": "2026-11-12",
+            "units_available_at_facility": 2,
+            "grid_reliability": 0.87,
+        },
+        {
+            "facility_id": "SAT-LDW",
+            "facility_name": "Lodwar Satellite Centre",
+            "unit_id": "U2610-LDW-0003",
+            "blood_group": "O-",
+            "expiry_date": "2026-11-20",
+            "units_available_at_facility": 1,
+            "grid_reliability": 0.62,
+        },
+    ]
+
+    results = rank_candidates(
+        requesting_facility_id="HSP-002",
+        candidates=test_candidates,
+        component="RBC",
+        dispatch_time=datetime.now(),
+    )
+
+    for i, r in enumerate(results, 1):
+        print(f"\n[ Rank {i} ] {r['facility_name']} (Cost: {r['cost_score']:.3f})")
+        print(f"  ETA Range : {r['eta_low_min']:.0f} to {r['eta_high_min']:.0f} mins (Likely: ~{r['eta_mid_min']:.0f} min)")
+        print(f"  Reason    : {r['reason']}")
+        if r["warnings"]:
+            print(f"  Alerts    : {' | '.join(r['warnings'])}")
+    print("\n" + "=" * 65)
+
