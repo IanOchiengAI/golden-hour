@@ -1,0 +1,181 @@
+"""
+Golden Hour — Multi-Criteria Dispatch Ranking Engine
+=====================================================
+Scores and ranks eligible candidate facilities/units for an emergency blood request.
+
+Why this cost function?
+-----------------------
+Cost = (0.5 * ETA_score) + (0.3 * Scarcity_score) + (0.2 * Expiry_score)
+
+1. ETA (Weight = 0.5 / 50%):
+   In acute clinical emergencies (obstetric haemorrhage, road trauma), minutes dictate
+   survival. Arrival time is the primary determinant.
+   Normalized: eta_minutes / 720 (max 12h horizon).
+
+2. Scarcity (Weight = 0.3 / 30%):
+   Rh-negative blood (especially O-) faces a 47.4% unmet rate nationwide, with only
+   7 units of O- RBC in stock across all 47 facilities. If Facility A is 30 mins away
+   with 1 unit of O- left, and Facility B is 35 mins away with 8 units of O+, sending O-
+   to an O+ patient would deplete the universal reserve. Scarcity penalty prevents this.
+   Score = 1.0 / (units_of_this_group_in_stock + 1)
+
+3. Expiry / FEFO (Weight = 0.2 / 20%):
+   23% of all RBC/WB blood units in Kenya are wasted due to expiry on shelves.
+   FEFO (First Expired, First Out) prioritizes eligible units that expire sooner
+   (provided they are unexpired and cold-chain safe), directly reducing wastage.
+   Score = 1.0 - (days_until_expiry / max_shelf_life)
+
+Usage for Roland (Django API):
+------------------------------
+    from ml.ranking import rank_candidates
+
+    ranked_options = rank_candidates(
+        requesting_facility_id="HSP-012",
+        patient_blood_group="O+",
+        component="RBC",
+        candidates=eligible_units_from_db,
+        dispatch_time=datetime.now()
+    )
+"""
+
+from datetime import datetime, date
+from typing import List, Dict, Any
+from ml.predict import predict_eta, explain_eta
+
+# Shelf life in days for FEFO calculation
+MAX_SHELF_LIFE = {
+    "RBC": 42,
+    "WB": 35,
+    "PLT": 5,
+    "FFP": 365,
+    "CRYO": 365,
+}
+
+# Rare groups subject to enhanced scarcity protection
+RARE_BLOOD_GROUPS = {"O-", "A-", "B-", "AB-"}
+
+
+def compute_dispatch_score(
+    eta_mid_minutes: float,
+    group_stock_count: int,
+    expiry_date_str: str,
+    component: str,
+) -> float:
+    """
+    Computes scalar penalty cost for a candidate. Lower score = better recommendation.
+    """
+    # 1. Normalized ETA (0 to 1, capped at 12 hours)
+    eta_norm = min(max(eta_mid_minutes, 0.0) / 720.0, 1.0)
+
+    # 2. Scarcity score (higher penalty when stock of this group is critically low)
+    scarcity_score = 1.0 / (float(group_stock_count) + 1.0)
+
+    # 3. Expiry score (higher urgency/favourability for units expiring sooner)
+    # Note: FEFO wants sooner expiry to be preferred, so lower penalty for sooner expiry.
+    try:
+        exp_date = date.fromisoformat(expiry_date_str)
+        days_left = max((exp_date - date.today()).days, 0)
+        max_life = MAX_SHELF_LIFE.get(component, 42)
+        # 0 = expires today (use immediately!), 1 = brand new unit
+        expiry_penalty = min(days_left / float(max_life), 1.0)
+    except Exception:
+        expiry_penalty = 0.5
+
+    # Weighted composite score
+    total_cost = (0.50 * eta_norm) + (0.30 * scarcity_score) + (0.20 * expiry_penalty)
+    return round(total_cost, 4)
+
+
+def rank_candidates(
+    requesting_facility_id: str,
+    candidates: List[Dict[str, Any]],
+    component: str = "RBC",
+    dispatch_time: datetime = None,
+    top_n: int = 3,
+) -> List[Dict[str, Any]]:
+    """
+    Takes a list of pre-filtered candidate facilities/units from Roland's DB query
+    and applies ETA prediction + multi-factor ranking.
+
+    Each candidate dict in `candidates` should have:
+        - facility_id: str
+        - facility_name: str
+        - unit_id: str
+        - blood_group: str
+        - expiry_date: str (YYYY-MM-DD)
+        - units_available_at_facility: int
+        - national_group_stock: int (optional, defaults to units_available)
+        - grid_reliability: float (optional)
+
+    Returns top_n ranked candidate dictionaries with ETA ranges and plain-language reasons.
+    """
+    if dispatch_time is None:
+        dispatch_time = datetime.now()
+
+    scored = []
+    seen_facilities = set()
+
+    for cand in candidates:
+        source_id = cand["facility_id"]
+        # Skip same facility (handled locally if requested)
+        if source_id == requesting_facility_id:
+            continue
+
+        # Keep top unit per facility to provide geographic diversity in top 3
+        if source_id in seen_facilities:
+            continue
+
+        # 1. Predict ETA range via ML model (with table fallback)
+        low, mid, high = predict_eta(
+            source_id=source_id,
+            dest_id=requesting_facility_id,
+            dispatch_time=dispatch_time,
+        )
+
+        if mid is None:
+            continue  # No road connection found
+
+        # 2. Compute cost score
+        nat_stock = cand.get("national_group_stock", cand.get("units_available_at_facility", 5))
+        cost = compute_dispatch_score(
+            eta_mid_minutes=mid,
+            group_stock_count=nat_stock,
+            expiry_date_str=cand["expiry_date"],
+            component=component,
+        )
+
+        # 3. Generate plain language reason
+        explanation = explain_eta(
+            source_id=source_id,
+            dest_id=requesting_facility_id,
+            low=low,
+            mid=mid,
+            high=high,
+            units_available=cand.get("units_available_at_facility", 1),
+            blood_group=cand["blood_group"],
+            expiry_date=cand["expiry_date"],
+        )
+
+        # Add warnings if low grid reliability or scarce group
+        warnings = []
+        if cand.get("grid_reliability", 1.0) < 0.75:
+            warnings.append(f"Grid reliability {cand['grid_reliability']:.0%} at source facility")
+        if cand["blood_group"] in RARE_BLOOD_GROUPS:
+            warnings.append(f"Rare blood group ({cand['blood_group']}) — scarcity rules applied")
+
+        result = dict(cand)
+        result.update({
+            "eta_low_min": low,
+            "eta_mid_min": mid,
+            "eta_high_min": high,
+            "cost_score": cost,
+            "reason": explanation,
+            "warnings": warnings,
+        })
+
+        seen_facilities.add(source_id)
+        scored.append((cost, result))
+
+    # Sort ascending by cost (lowest cost = best option)
+    scored.sort(key=lambda x: x[0])
+    return [item[1] for item in scored[:top_n]]

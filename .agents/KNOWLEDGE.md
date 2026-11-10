@@ -127,33 +127,50 @@ WHERE status = 'in_stock'
 
 ---
 
-## 4 — The Scoring Algorithm
+## 4 — The Scoring & Ranking Algorithm
 
-Every (unit, request) pair gets a cost score. Lower = better dispatch.
+### Why Multi-Criteria Scoring Beats "Nearest Hospital First" (The Judge Trap Question)
+> **Trap Question:** *"Why not just query the closest hospital by GPS distance or Google Maps API?"*
+>
+> **The Real-World Answer:**
+> 1. **Road Quality & Transit Realities:** Shortest distance does not equal fastest arrival. Our evaluation shows the fixed table lookup is off by **an average of 2.6 hours (158 min MAE)** on poor roads. A facility 80 km away on a tarmac highway arrives in 1 hour; a facility 50 km away across unpaved roads in rainy conditions takes 3.5 hours.
+> 2. **Depletion of Universal Reserves (O− Scarcity):** If an O+ patient needs blood, a naive "nearest facility" search might grab the nearest facility's last unit of O−. That hospital is now stripped of universal donor blood, meaning the next emergency trauma or haemorrhage patient dies. The algorithm penalizes burning scarce groups when alternatives exist.
+> 3. **The 23% Spoilage Crisis (FEFO):** 23% of Kenya's red cells expire or spoil on shelves. Nearest-only matching ignores shelf life. Our algorithm applies FEFO (First Expired, First Out) to prioritize units nearing expiration before they are wasted.
 
+### The Cost Function Formula
+Every eligible candidate facility/unit pair is evaluated with a scalar cost score. Lower score = higher recommendation rank.
+
+$$\text{Cost} = (0.50 \times \text{ETA}_{\text{norm}}) + (0.30 \times \text{Scarcity}) + (0.20 \times \text{ExpiryPenalty})$$
+
+| Factor | Weight | Formula | Plain Language Rationale |
+|---|---|---|---|
+| **ETA** | **50% (0.50)** | $\min(\text{ETA}_{\text{mid}} / 720, 1.0)$ | **Minutes save lives.** In acute obstetric haemorrhage (our #2 unmet clinical cause) and trauma, transit time is the primary clinical factor. |
+| **Scarcity** | **30% (0.30)** | $1.0 / (\text{TotalUnitsInGroup} + 1)$ | **Protects rare reserves.** O− has a catastrophic **47.4% unmet rate** nationally, with only 7 units in stock. Never burn rare units if compatible standard stock can arrive in time. |
+| **Expiry (FEFO)** | **20% (0.20)** | $\text{DaysToExpiry} / \text{MaxShelfLife}$ | **Prevents 23% national wastage.** Units nearing expiration (e.g. 5 days left) are prioritized over freshly donated units (35 days left) so blood isn't thrown out. |
+
+### Hard Biological & Safety Constraints (Cost = $\infty$)
+The scoring function NEVER evaluates:
+- Incompatible ABO/RhD blood groups
+- Units with `temp_excursion_exposed = 1` (cold chain violation)
+- Expired units (`expiry_date <= today`)
+- Units with status other than `'in_stock'`
+
+### How Roland Integrates This (Django API)
+In Roland's endpoint `GET /requests/{id}/options`:
 ```python
-def cost(unit, request, eta_hours, stock_snapshot):
-    # Weights (tune these)
-    w_time     = 0.5   # ETA dominates
-    w_scarcity = 0.3   # Protect rare groups (O-)
-    w_expiry   = 0.2   # FEFO: use units closest to expiry
+from ml.ranking import rank_candidates
 
-    # Scarcity: how rare is this blood group across all facilities?
-    total_of_this_group = stock_snapshot[unit.blood_group].sum()
-    scarcity = 1 / (total_of_this_group + 1)  # higher when rare
-
-    # Expiry urgency: 0 = expires today, 1 = full shelf life remaining
-    days_left = (unit.expiry_date - today).days
-    expiry_score = 1 - (days_left / max_shelf_life[unit.component])
-
-    return w_time * eta_hours + w_scarcity * scarcity + w_expiry * expiry_score
+# 1. Roland's DB query gets eligible, in-stock, cold-chain safe units
+# 2. Roland calls rank_candidates:
+top_3_options = rank_candidates(
+    requesting_facility_id=request.facility_id,
+    candidates=eligible_units_list,
+    component="RBC",
+    dispatch_time=request.created_at,
+    top_n=3
+)
+# Returns top 3 options with eta_low_min, eta_mid_min, eta_high_min, and plain-language reason!
 ```
-
-**Hard constraints (cost = infinity if violated):**
-- Blood group incompatible
-- `temp_excursion_exposed = True` (unless officer overrides)
-- Unit already expired
-- Unit not `in_stock`
 
 ---
 
