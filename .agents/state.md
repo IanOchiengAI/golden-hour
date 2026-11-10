@@ -13,7 +13,7 @@
 | **Challenge** | Emergency Request & Dispatch |
 | **Hackathon** | Terumo BCT Africa Hackathon 2026 |
 | **Build window** | Tue 10 Nov 12:00 → Wed 11 Nov 12:00 EAT |
-| **GitHub repo** | *[To be created — needed by 14:00 today]* |
+| **GitHub repo** | https://github.com/IanOchiengAI/golden-hour |
 | **Live demo** | *[To be deployed]* |
 | **Submission form** | https://docs.google.com/forms/d/e/1FAIpQLSfpGlw4gKrrhRZobffRZreKFFSgGXQ1r4Hw4fxZap8NgdqDCg/viewform |
 | **Check-in form** | https://docs.google.com/forms/d/e/1FAIpQLSfu1LgJRDJdEFr91opKYw6uBVRoK_pXEhqvx4bQgayp3ol8Wg/viewform |
