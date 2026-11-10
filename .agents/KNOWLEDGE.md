@@ -217,4 +217,84 @@ Use these in the README, pitch, and demo:
 
 ---
 
+## 9 — Data Privacy & KDPA Compliance (From Expert Session, 2026-11-10 15:00)
+
+Notes from the blood-service expert Q&A. Required for judges on Technical Depth and African Conditions criteria.
+
+### What to BUILD in the prototype
+| Item | Implementation |
+|---|---|
+| Audit log | Every action: `who · role · action · object · before · after · reason · timestamp` |
+| Role-based access | 3 roles only: clinician (raise request), blood bank officer (decide), lab officer (release) |
+| AI explainability | Plain-language reason shown per ranked option — mandatory, not optional |
+| Human review gate | Officer Accept/Change/Reject before any unit moves — never AI alone |
+| Encryption | Encryption at rest + in transit (one config line; mention it explicitly) |
+
+### What to MENTION in pitch/README (do not build)
+| Compliance item | What to say |
+|---|---|
+| Data mapping | Map what we collect, why, where stored, who sees it |
+| Lawful basis | Assign lawful basis per purpose; s.46 ground for health data under KDPA |
+| DPIA (s.31) | Health data + AI + large scale triggers one; we would run it before production |
+| ODPC registration | Health-sector controllers must register regardless of size |
+| Processor agreements | Oracle, hosting providers, SMS providers all need DPAs |
+| Privacy notice | Layered notice + consent log in production |
+| Incident response | 36/72-hour ODPC reporting window; donor notice template |
+| Cross-border transfers | Data stays in-country; map any cross-border flows |
+| Rights request workflow | "My Data" screen — shown as next step in architecture diagram |
+| Bias testing | AI ranking tested for bias across blood groups and counties |
+
+### Key statutes
+- **KDPA** = Kenya Data Protection Act
+- **s.31** = triggers DPIA requirement (health data, large scale, AI/profiling, cross-border)
+- **s.46** = additional lawful grounds for processing health/sensitive data
+- **ODPC** = Office of the Data Protection Commissioner (the regulator)
+
+> [!IMPORTANT]
+> Daniel: add a "Data & Privacy" section to the architecture diagram showing data flow with KDPA annotations. High judge impact, low effort.
+
+---
+
+## 10 — Agreed API Contract (From Team Plan, 2026-11-10)
+
+Roland builds these. Amanya builds frontend against mock responses from 16:30.
+
+| Method | Endpoint | Who calls it | What it does |
+|---|---|---|---|
+| `POST` | `/requests` | Clinician | Raise an emergency request |
+| `GET` | `/requests/{id}/options` | Blood bank officer | Ranked sites with ETA range, method, plain-language reason |
+| `POST` | `/requests/{id}/decision` | Blood bank officer | Accept / Change / Reject with reason |
+| `POST` | `/dispatches/{id}/release` | Lab officer | Confirm or decline unit release |
+| `POST` | `/dispatches/{id}/status` | System | Update: dispatched → in transit → received |
+| `GET` | `/audit?request_id=` | Demo / judges | Full audit trail for a request |
+| `GET` | `/readiness` | Manager | Hospital × blood group grid (add-on — build only if time) |
+
+### Model interface (Ian builds, Roland calls)
+```python
+predict_eta(source_id, dest_id, dispatch_time) → (low, mid, high)  # in minutes
+# Error / timeout → backend calls fallback_eta() and sets method = 'fallback'
+```
+
+### Request status lifecycle
+```
+Raised → Matching → UnitsHeld → AwaitingDecision → Escalated
+       → SentToSupplier → HandledManually
+       → Dispatched → InTransit → Received
+```
+Every state transition writes an audit entry. Every transition can send an SMS.
+
+---
+
+## 11 — Team Plan Cut Rules (From Team Plan, 2026-11-10)
+
+| Gate | If not working | Action |
+|---|---|---|
+| **Tue 22:00** | Dispatch flow end-to-end | Stop all add-ons; everyone helps the flow |
+| **Wed 04:00** | ETA model beating baseline | Ship baseline only; show honest numbers |
+| **Wed 04:00** | Automation and SMS | Keep auto-hold only; mention rest in slides |
+| **Wed 06:00** | Readiness map | Drop it; show as "next step" in architecture diagram |
+| **Wed 08:00** | Live deployment | Demo from local run in video; say so in README |
+
+---
+
 *Golden Hour · Terumo BCT Africa Hackathon 2026 · Updated each session*
