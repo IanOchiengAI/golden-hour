@@ -71,10 +71,15 @@ class ApiClient {
     units_requested: number
     urgency: string
     clinical_note?: string
+    client_request_id?: string
   }): Promise<EmergencyRequest> {
+    const payload = {
+      ...data,
+      client_request_id: data.client_request_id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`),
+    }
     return this.request<EmergencyRequest>('/requests', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     })
   }
 
@@ -82,9 +87,21 @@ class ApiClient {
     return this.request<OptionsResponse>(`/requests/${id}/options`)
   }
 
-  async getRequests(params?: { status?: string }): Promise<{ results: EmergencyRequest[] } | EmergencyRequest[]> {
-    const qs = params?.status ? `?status=${encodeURIComponent(params.status)}` : ''
+  async getRequests(params?: { status?: string; urgency?: string; limit?: number }): Promise<{ results: EmergencyRequest[] } | EmergencyRequest[]> {
+    const query = new URLSearchParams()
+    if (params?.status) query.set('status', params.status)
+    if (params?.urgency) query.set('urgency', params.urgency)
+    if (params?.limit) query.set('limit', String(params.limit))
+    const qs = query.toString() ? `?${query.toString()}` : ''
     return this.request<{ results: EmergencyRequest[] } | EmergencyRequest[]>(`/requests${qs}`)
+  }
+
+  async getDispatches(params?: { status?: string; limit?: number }): Promise<{ results: Dispatch[] } | Dispatch[]> {
+    const query = new URLSearchParams()
+    if (params?.status) query.set('status', params.status)
+    if (params?.limit) query.set('limit', String(params.limit))
+    const qs = query.toString() ? `?${query.toString()}` : ''
+    return this.request<{ results: Dispatch[] } | Dispatch[]>(`/dispatches${qs}`)
   }
 
   async getRequest(id: number): Promise<EmergencyRequest> {

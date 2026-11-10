@@ -42,8 +42,19 @@ export interface EmergencyRequest {
   created_at: string
   updated_at?: string
   held_option_id?: number
-  authorisation_route?: 'standing' | 'per_transfer'
+  dispatch_id?: number
+  dispatch_status?: string | null
+  authorisation_route?: 'standing' | 'per_transfer' | ''
+  due_at?: string | null
   decision_due_at?: string
+  held_option?: {
+    id: number
+    rank: number
+    facility_id: string
+    facility_name: string
+    eta: EtaRange
+    is_partial: boolean
+  } | null
 }
 
 export interface EtaRange {

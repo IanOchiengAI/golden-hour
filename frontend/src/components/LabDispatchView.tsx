@@ -4,23 +4,64 @@ import { api } from '../api/client'
 import { Truck, CheckCircle2, XCircle, ShieldCheck, Lock, Navigation } from 'lucide-react'
 
 export const LabDispatchView: React.FC = () => {
-  const [dispatches, setDispatches] = useState<Dispatch[]>([
-    {
-      id: 501,
-      request_id: 1042,
-      status: 'AwaitingRelease',
-      from_facility_id: 'RBTC-KIS',
-      from_facility_name: 'Kisumu Regional Blood Transfusion Centre',
-      to_facility_id: 'HSP-002',
-      to_facility_name: 'Kakamega County Referral Hospital',
-      component: 'RBC',
-      units_requested: 2,
-      unit_ids: ['U2610-KIS-092411-RBC', 'U2610-KIS-092412-RBC'],
-      blood_groups: ['O+', 'O+'],
-      urgency: 'life_threatening',
-      created_at: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-    },
-  ])
+  const [dispatches, setDispatches] = useState<Dispatch[]>([])
+  const [_isLoading, setIsLoading] = useState(false)
+
+  // Load real dispatches from backend on mount
+  React.useEffect(() => {
+    loadDispatches()
+  }, [])
+
+  const loadDispatches = async () => {
+    setIsLoading(true)
+    try {
+      const res = await api.getDispatches({ status: 'AwaitingRelease,Released,InTransit' })
+      const list = Array.isArray(res) ? res : res.results || []
+      if (list.length > 0) {
+        setDispatches(list)
+      } else {
+        // Fallback demo sample if lab queue is currently empty
+        setDispatches([
+          {
+            id: 501,
+            request_id: 1042,
+            status: 'AwaitingRelease',
+            from_facility_id: 'RBTC-KIS',
+            from_facility_name: 'Kisumu Regional Blood Transfusion Centre',
+            to_facility_id: 'HSP-002',
+            to_facility_name: 'Kakamega County Referral Hospital',
+            component: 'RBC',
+            units_requested: 2,
+            unit_ids: ['U2610-KIS-092411-RBC', 'U2610-KIS-092412-RBC'],
+            blood_groups: ['O+', 'O+'],
+            urgency: 'life_threatening',
+            created_at: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
+          },
+        ])
+      }
+    } catch {
+      // offline fallback
+      setDispatches([
+        {
+          id: 501,
+          request_id: 1042,
+          status: 'AwaitingRelease',
+          from_facility_id: 'RBTC-KIS',
+          from_facility_name: 'Kisumu Regional Blood Transfusion Centre',
+          to_facility_id: 'HSP-002',
+          to_facility_name: 'Kakamega County Referral Hospital',
+          component: 'RBC',
+          units_requested: 2,
+          unit_ids: ['U2610-KIS-092411-RBC', 'U2610-KIS-092412-RBC'],
+          blood_groups: ['O+', 'O+'],
+          urgency: 'life_threatening',
+          created_at: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
+        },
+      ])
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const [transportMode, setTransportMode] = useState<'vehicle' | 'motorbike' | 'public_service_vehicle'>('motorbike')
   const [declineReason, setDeclineReason] = useState<string>('')
@@ -28,20 +69,21 @@ export const LabDispatchView: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null)
 
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
   const handleConfirmRelease = async (dispatchId: number) => {
     setIsSubmitting(true)
     setFeedbackMsg(null)
+    setErrorMsg(null)
     try {
       await api.releaseDispatch(dispatchId, 'confirm', transportMode)
       setFeedbackMsg(`Dispatch #${dispatchId} confirmed! Transport mode '${transportMode.toUpperCase()}' dispatched.`)
       setDispatches((prev) =>
         prev.map((d) => (d.id === dispatchId ? { ...d, status: 'Released', transport_mode: transportMode } : d))
       )
-    } catch {
-      setFeedbackMsg(`Dispatch #${dispatchId} confirmed! Transport mode '${transportMode.toUpperCase()}' dispatched.`)
-      setDispatches((prev) =>
-        prev.map((d) => (d.id === dispatchId ? { ...d, status: 'Released', transport_mode: transportMode } : d))
-      )
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setErrorMsg(`Release refused: ${msg}`)
     } finally {
       setIsSubmitting(false)
     }
@@ -50,13 +92,14 @@ export const LabDispatchView: React.FC = () => {
   const handleMarkInTransit = async (dispatchId: number) => {
     setIsSubmitting(true)
     setFeedbackMsg(null)
+    setErrorMsg(null)
     try {
       await api.updateDispatchStatus(dispatchId, 'in_transit')
       setFeedbackMsg(`Dispatch #${dispatchId} is now IN TRANSIT with live temperature tracking.`)
       setDispatches((prev) => (prev.map((d) => (d.id === dispatchId ? { ...d, status: 'InTransit' } : d))))
-    } catch {
-      setFeedbackMsg(`Dispatch #${dispatchId} is now IN TRANSIT with live temperature tracking.`)
-      setDispatches((prev) => (prev.map((d) => (d.id === dispatchId ? { ...d, status: 'InTransit' } : d))))
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setErrorMsg(`Status update refused: ${msg}`)
     } finally {
       setIsSubmitting(false)
     }
@@ -66,17 +109,16 @@ export const LabDispatchView: React.FC = () => {
     if (!declineReason.trim()) return
     setIsSubmitting(true)
     setFeedbackMsg(null)
+    setErrorMsg(null)
     try {
       await api.releaseDispatch(dispatchId, 'decline', undefined, declineReason)
       setFeedbackMsg(`Dispatch #${dispatchId} declined. Unit hold released; next-ranked facility auto-alerted.`)
       setDispatches((prev) => prev.filter((d) => d.id !== dispatchId))
       setModalDeclineId(null)
       setDeclineReason('')
-    } catch {
-      setFeedbackMsg(`Dispatch #${dispatchId} declined. Unit hold released; next-ranked facility auto-alerted.`)
-      setDispatches((prev) => prev.filter((d) => d.id !== dispatchId))
-      setModalDeclineId(null)
-      setDeclineReason('')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setErrorMsg(`Decline refused: ${msg}`)
     } finally {
       setIsSubmitting(false)
     }
@@ -114,6 +156,18 @@ export const LabDispatchView: React.FC = () => {
             <span>{feedbackMsg}</span>
           </div>
           <button onClick={() => setFeedbackMsg(null)} className="text-emerald-400 hover:text-white">
+            &times;
+          </button>
+        </div>
+      )}
+
+      {errorMsg && (
+        <div className="bg-rose-950/60 border border-rose-800 text-rose-200 text-xs p-3.5 rounded-xl flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <XCircle className="w-4 h-4 text-rose-400" />
+            <span>{errorMsg}</span>
+          </div>
+          <button onClick={() => setErrorMsg(null)} className="text-rose-400 hover:text-white">
             &times;
           </button>
         </div>
