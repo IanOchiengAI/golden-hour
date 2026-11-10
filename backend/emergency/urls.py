@@ -5,4 +5,6 @@ from . import views
 urlpatterns = [
     path("requests", views.RequestCreateView.as_view(), name="request-create"),
     path("requests/<int:request_id>/options", views.RequestOptionsView.as_view(), name="request-options"),
+    path("requests/<int:request_id>/decision", views.DecisionView.as_view(), name="request-decision"),
+    path("requests/<int:request_id>/authorise", views.AuthoriseView.as_view(), name="request-authorise"),
 ]

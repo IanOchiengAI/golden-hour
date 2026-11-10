@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from .country import get_config
-from .models import Component, EmergencyRequest, PATIENT_GROUP_CHOICES, RankedOption, Urgency
+from .models import Component, Dispatch, EmergencyRequest, PATIENT_GROUP_CHOICES, RankedOption, Urgency
 from .rules import CompatibilityError, compatible_donor_groups
 
 
@@ -54,3 +54,88 @@ class OptionSerializer(serializers.ModelSerializer):
 
     def get_is_held(self, o):
         return o.id in self.context.get("held_option_ids", set())
+
+
+# ── Workflow inputs ──────────────────────────────────────────────────────
+def _require_reason(attrs, actions):
+    if attrs["action"] in actions and len(attrs.get("reason", "").strip()) < 3:
+        raise serializers.ValidationError({"reason": f"A reason is required for '{attrs['action']}'."})
+
+
+class DecisionSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=["accept", "change", "reject"])
+    option_id = serializers.IntegerField(required=False, min_value=1)
+    reason = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+    def validate(self, attrs):
+        if attrs["action"] == "change" and not attrs.get("option_id"):
+            raise serializers.ValidationError({"option_id": "Choose the option to change to."})
+        _require_reason(attrs, ("change", "reject"))
+        return attrs
+
+
+class AuthoriseSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=["approve", "reject", "stop", "review"])
+    reason = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+    def validate(self, attrs):
+        _require_reason(attrs, ("reject", "stop"))
+        return attrs
+
+
+# ── Dispatch: what the supplying lab sees ────────────────────────────────
+# Rule: supplying facilities never see patient details. Only the fields listed
+# here are sent; nothing from the request's patient fields, note or warnings.
+SUPPLIER_SAFE_DISPATCH_FIELDS = [
+    "id", "request_id", "status", "from_facility_id", "to_facility_id", "to_facility_name",
+    "component", "units_requested", "unit_ids", "blood_groups", "urgency", "transport_mode",
+    "created_at", "released_at", "in_transit_at", "received_at", "coolbox_max_temp_c",
+]
+
+
+class DispatchSerializer(serializers.ModelSerializer):
+    request_id = serializers.IntegerField(source="request.id", read_only=True)
+    component = serializers.CharField(source="request.component", read_only=True)
+    units_requested = serializers.IntegerField(source="request.units_requested", read_only=True)
+    urgency = serializers.CharField(source="request.urgency", read_only=True)
+    to_facility_name = serializers.SerializerMethodField()
+    blood_groups = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Dispatch
+        fields = SUPPLIER_SAFE_DISPATCH_FIELDS
+
+    def get_to_facility_name(self, d):
+        from . import stock
+        try:
+            f = stock.get_facility(d.to_facility_id)
+        except stock.StarterDataUnavailable:
+            f = None
+        return f["name"] if f else d.to_facility_id
+
+    def get_blood_groups(self, d):
+        # Groups of the units being sent (unit labels, not the patient's group).
+        by_unit = dict(zip(d.option.unit_ids, d.option.blood_groups))
+        return [by_unit.get(u) for u in d.unit_ids]
+
+
+class RequestDetailSerializer(RequestSerializer):
+    """Request + its held option + its current dispatch. Returned by workflow actions."""
+
+    held_option_id = serializers.SerializerMethodField()
+    authorisation_route = serializers.CharField(read_only=True)
+    status_changed_at = serializers.DateTimeField(read_only=True)
+    dispatch = serializers.SerializerMethodField()
+
+    class Meta(RequestSerializer.Meta):
+        fields = RequestSerializer.Meta.fields + [
+            "held_option_id", "authorisation_route", "status_changed_at", "dispatch",
+        ]
+
+    def get_held_option_id(self, r):
+        hold = r.holds.filter(released_at__isnull=True).first()
+        return hold.option_id if hold else None
+
+    def get_dispatch(self, r):
+        d = r.dispatches.order_by("-created_at", "-id").first()
+        return DispatchSerializer(d).data if d else None

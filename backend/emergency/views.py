@@ -9,7 +9,10 @@ from accounts.permissions import roles_allowed
 from . import services, stock
 from .country import data_as_of
 from .models import EmergencyRequest
-from .serializers import CreateRequestSerializer, OptionSerializer, RequestSerializer
+from .serializers import (
+    AuthoriseSerializer, CreateRequestSerializer, DecisionSerializer, OptionSerializer,
+    RequestDetailSerializer, RequestSerializer,
+)
 
 
 def starter_data_down(e):
@@ -66,3 +69,32 @@ class RequestOptionsView(APIView):
             "held_option_id": next(iter(held_option_ids), None),
             "options": OptionSerializer(options, many=True, context={"held_option_ids": held_option_ids}).data,
         })
+
+
+class DecisionView(APIView):
+    """
+    POST /requests/{id}/decision — blood bank officer: accept, change or reject.
+    Accept and change then follow the authorisation tier in config/kenya.yaml.
+    """
+
+    permission_classes = [roles_allowed(Role.BLOOD_BANK_OFFICER)]
+
+    def post(self, request, request_id):
+        req = get_object_or_404(EmergencyRequest, pk=request_id)
+        data = DecisionSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        req = services.decide(req, actor=request.user, **data.validated_data)
+        return Response(RequestDetailSerializer(req).data)
+
+
+class AuthoriseView(APIView):
+    """POST /requests/{id}/authorise — MoH authorising officer: approve, reject, stop or review."""
+
+    permission_classes = [roles_allowed(Role.MOH_OFFICER)]
+
+    def post(self, request, request_id):
+        req = get_object_or_404(EmergencyRequest, pk=request_id)
+        data = AuthoriseSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        req = services.authorise(req, actor=request.user, **data.validated_data)
+        return Response(RequestDetailSerializer(req).data)
