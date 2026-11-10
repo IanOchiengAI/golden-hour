@@ -41,6 +41,34 @@ leave it unstaged. `ml/predict.py` reads routes from the same path.
 | `STARTER_DB_PATH`, `APP_DB_PATH` | see above | |
 | `LOGIN_THROTTLE_RATE` | `10/min` | rate limit on `/auth/login` |
 
+## Endpoints built so far
+
+### `POST /requests` — clinician
+The requesting facility is the clinician's own (from their profile). Matching,
+ML ranking and the auto-hold of the top site's units all happen here.
+
+```json
+{"patient_blood_group": "O+ | … | unknown", "component": "RBC | PLT | FFP",
+ "units_requested": 2, "urgency": "life_threatening | urgent | routine",
+ "clinical_note": "optional, ≤500 chars"}
+```
+→ `201` with the request: `id, status ("AwaitingDecision" or "HandledManually"),
+compatible_groups, warnings, eta_method, …`. `400` on bad input (incl. platelets
+for an unknown group), `503` if the starter data is missing.
+
+### `GET /requests/{id}/options` — blood bank officer
+Read-only.
+
+```json
+{"request": {…}, "method": "model | fallback", "ai_offline": false,
+ "data_as_of": "2026-10-31", "held_option_id": 1,
+ "options": [{"id": 1, "rank": 1, "facility_id": "HSP-001", "facility_name": "…",
+   "eta": {"low_min": 45.2, "mid_min": 50.3, "high_min": 53.3}, "method": "model",
+   "reason": "ETA ~50 min (45–53 min range) · 11 km good road · …",
+   "warnings": ["…"], "units_available": 3, "is_partial": false,
+   "unit_ids": ["U2610-NBO-052121-RBC"], "blood_groups": ["O-"], "is_held": true}]}
+```
+
 ## Auth
 
 `POST /auth/login {username, password}` → `{token, role, facility_id}`.

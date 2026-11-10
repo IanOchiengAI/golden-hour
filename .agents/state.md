@@ -41,6 +41,7 @@
 | 2026-11-10 ~16:00 | Roland (via Claude) | Team plan shared: roles, API contract, tech stack, status lifecycle, cut rules, sleep shifts. |
 | 2026-11-10 16:15 | Ian | Pre-build review. Tech stack NOT yet decided. No code committed. Build starts 16:30. |
 | 2026-11-10 16:30–17:16 | Ian | Full data exploration complete. All 4 cleaning rules verified against real data. ETA model trained and pushed to GitHub. |
+| 2026-11-10 ~17:30–19:20 | Roland (via Claude Code) | Backend on `ft/backend`: Django + DRF scaffold, token auth + roles, audit log, rules engine + tests, `POST /requests` (matching + auto-hold at creation), `GET /requests/{id}/options` (read-only). 35 tests pass. Found `blood_system.sqlite` committed as 0 bytes; added rebuild script. |
 
 ---
 
@@ -57,32 +58,37 @@
 - [x] **`ml/predict.py`** — Roland imports this. `predict_eta(source_id, dest_id, now)` → `(low, mid, high)` in minutes. Auto-fallback to table lookup if model offline.
 - [x] **`ml/eta_model.pkl`** — trained model saved to repo
 - [x] Baseline vs model numbers confirmed: **Baseline 17.8 min MAE → Model 14.1 min MAE → 20.6% improvement**
+- [x] **Backend (`backend/`, branch `ft/backend`)** — see `backend/README.md` for run steps and API shapes
+  - Django 5.2 + DRF; token login `POST /auth/login` (rate-limited); role check on every endpoint; logins, failed logins and refused calls audited
+  - Append-only `AuditEvent`; `EmergencyRequest`, `RankedOption`, `UnitHold` (DB allows one active hold per unit)
+  - `emergency/rules.py` — ABO/RhD tables (RBC; reversed for FFP; PLT strict), unknown group → RBC O− / FFP AB with warning (PLT refused), unit filter (in stock, no excursion, not expired vs `data_as_of`, screened non-reactive, not held), per-site pick (exact group first, universal donor last, FEFO), partial sites flagged
+  - `POST /requests` — clinician; matching + ML ranking + auto-hold of top site run here; Raised → Matching → UnitsHeld → AwaitingDecision (or HandledManually when no stock)
+  - `GET /requests/{id}/options` — blood bank officer; read-only; ETA range, `method`, `ai_offline`, reason, `is_held`
+  - Fallback: if the model won't load or ranking throws, backend ranks by route table ±20% with `method = fallback`
+  - `config/kenya.yaml` created with `data_as_of: 2026-10-31`, `emergency_authorisation`, urgency targets, escalation minutes, `options_count`, `ranking_shortlist`
+  - `backend/scripts/build_starter_db.py` rebuilds `blood_system.sqlite` from the CSVs (adds indexes)
+  - Demo users: `python manage.py seed_demo_users` (clinician / officer / backup.officer / moh / lab `@goldenhour.health`, password `demo2026`)
 
 ---
 
 ## In Progress 🔄
 
-- [ ] Tech stack final decision (Django vs FastAPI, PostgreSQL vs SQLite) — decide at 16:30
-- [ ] Backend scaffold (Roland)
-- [ ] Frontend scaffold (Amanya)
-- [ ] Data exploration / ETA model (Ian)
+- [ ] Frontend scaffold (Amanya) — can switch `POST /requests` and `GET /options` from mocks to the real API now
+- [ ] Backend next: `POST /requests/{id}/decision` (Accept / Change moves hold / Reject releases), `/authorise`, `/dispatches/{id}/release`, `/dispatches/{id}/status`, `GET /audit`
 
 ---
 
 ## Next Up 📋
 
-**By 16:30 — Decide before writing a single line of code:**
-1. Django or FastAPI? (Roland decides)
-2. PostgreSQL or SQLite? (SQLite is already loaded with data — saves 1–2 hours)
-3. Tailwind or Mantine UI? (Amanya decides)
-4. Everyone commits to their branch; merge to main at each checkpoint
+**Backend (Roland), toward the 22:00 gate:**
+1. Merge `ft/backend` to `main` (checkpoint)
+2. `POST /requests/{id}/decision` — Accept / Change (moves hold to chosen option) / Reject (releases hold → HandledManually), reason required for Change/Reject
+3. `POST /requests/{id}/authorise` — tier from `emergency_authorisation`; standing + life-threatening skips to SentToSupplier with MoH notified
+4. `Dispatch` model, `POST /dispatches/{id}/release` (decline → release hold, auto-hold next-ranked site), `POST /dispatches/{id}/status`
+5. `GET /audit?request_id=`
+6. Supplier view must hide patient fields
 
-**By 19:00 (before Daniel arrives):**
-- Working algorithm: ABO compatibility + unit filter + cold chain check
-- ETA model trained, baseline MAE vs model MAE recorded
-- API: at least `POST /requests` and `GET /requests/{id}/options` returning real data
-- Frontend: request form + results view (Accept / Change / Reject visible)
-- Architecture doc ready for Daniel handoff
+**Frontend (Amanya):** request form + officer screen against the real `POST /requests` and `GET /options`
 
 **By Tue 22:00 gate:**
 - Dispatch flow end-to-end (or stop all add-ons and fix it)
@@ -91,9 +97,24 @@
 
 ## Open Blockers 🚧
 
-- [ ] **Tech stack not decided** — Django vs FastAPI, PostgreSQL vs SQLite (resolve at 16:30)
-- [ ] **Roland's preferred stack** — Django confirmed in team plan, but not verbally agreed yet
+- [x] ~~Tech stack not decided~~ — Django + DRF, SQLite (see CLAUDE.md)
+- [ ] **`blood_system.sqlite` is a 0-byte file in git.** Everyone (incl. `ml/predict.py`, which reads routes from it) must run `python backend/scripts/build_starter_db.py` once. Do **not** commit the rebuilt file (~100 MB, over GitHub's limit) — leave it unstaged.
 - [ ] **Daniel not yet online** — joins ~19:00; needs handoff doc ready
+
+## Notes for owners (from backend integration)
+
+**Ian (`ml/`) — not edited by backend:**
+- `ml/ranking.py` `compute_dispatch_score()` uses `date.today()` for days-to-expiry. It should use the data as-of date (`data_as_of: 2026-10-31` in `config/kenya.yaml`); today every unit looks ~10 days closer to expiry than the data says. Suggest an `as_of: date` parameter the backend can pass.
+- `predict_eta()` still falls back silently. Backend works out `method` by calling `ml.predict._load_model()` itself (private function) — please return `method` from `predict_eta` so the backend can drop that.
+- `rank_candidates` docstring still shows `patient_blood_group=` (not a parameter).
+- Speed: model load ~5–9 s (backend warms it at server start); ~30 ms per site after. `predict_eta`/`explain_eta` open two SQLite connections per call. Backend sends only the 12 nearest sites (by route table) to `rank_candidates`.
+- Possible model saturation: HSP-002 request got exactly 436.0 min ETA for five different sites (HSP-020/018/012/019, RBTC-ELD).
+
+**Daniel (`config/`):** `config/kenya.yaml` was created by backend with the keys it reads (see file comments). Add the sample second country by copying it; switch with env `COUNTRY_CONFIG`.
+
+**Amanya (`frontend/`):** API has no `/api` prefix and no trailing slashes (`/requests`, `/requests/1/options`). No CORS middleware yet — use a Vite dev proxy to `http://localhost:8000`. Response shapes in `backend/README.md`.
+
+**Data gaps:** the dataset has no quarantine flag; "untested" is enforced by requiring the unit's donation to be screened `non_reactive` with a `tested_date`. Supported components are RBC, PLT, FFP (what the requests data uses); WB and CRYO are not requestable yet.
 
 ---
 
