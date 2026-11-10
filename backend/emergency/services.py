@@ -3,6 +3,8 @@ Request workflow. Every status change goes through transition(), which refuses
 moves the lifecycle does not allow and writes an AuditEvent.
 """
 
+from datetime import timedelta
+
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -102,22 +104,63 @@ def release_holds(req: EmergencyRequest, *, reason: str, actor=None) -> list[str
     return unit_ids
 
 
+# ── Hold expiry ──────────────────────────────────────────────────────────
+# Requests waiting on a person still hold units. After hold_ttl_min (config)
+# the hold is released and the request handed over, so one account cannot
+# lock scarce units (e.g. all O−) by raising requests and leaving them.
+HOLD_EXPIRES_IN = (S.AWAITING_DECISION, S.ESCALATED, S.AWAITING_AUTHORISATION)
+OPEN_STATUSES = (S.RAISED, S.MATCHING, S.UNITS_HELD, S.AWAITING_DECISION, S.ESCALATED,
+                 S.AWAITING_AUTHORISATION, S.SENT_TO_SUPPLIER)
+
+
+@transaction.atomic
+def expire_stale_holds(now=None) -> list[int]:
+    """
+    Release holds on requests that have waited longer than hold_ttl_min for a
+    decision or authorisation, and hand those requests over. The views run it
+    before every new request, decision and authorisation (in its own
+    transaction, so a later 409 doesn't roll the expiry back), and a cron can
+    run `manage.py expire_holds`.
+    Returns the ids of the requests it handed over.
+    """
+    ttl = int(get_config().get("hold_ttl_min", 30))
+    cutoff = (now or timezone.now()) - timedelta(minutes=ttl)
+    expired = []
+    stale = EmergencyRequest.objects.filter(status__in=HOLD_EXPIRES_IN, status_changed_at__lt=cutoff)
+    for req in stale.select_for_update():
+        with transaction.atomic():
+            waited_for = req.status
+            unit_ids = release_holds(req, reason=f"Hold expired after {ttl} min in {waited_for}")
+            record(action="hold_expired", request=req, object_type="request", object_id=req.pk,
+                   before={"status": waited_for, "unit_ids": unit_ids},
+                   reason=f"No action within {ttl} min; units released for other requests")
+            transition(req, S.HANDLED_MANUALLY,
+                       reason=f"Hold expired: no action within {ttl} min while {waited_for}. Handle by phone.")
+            expired.append(req.pk)
+    return expired
+
+
+def open_request_count(facility_id: str) -> int:
+    return EmergencyRequest.objects.filter(requesting_facility_id=facility_id, status__in=OPEN_STATUSES).count()
+
+
 MAX_MATCH_ATTEMPTS = 3
 
 
 @transaction.atomic   # any failure (e.g. starter data missing) leaves no half-made request
 def create_request(*, user, requesting_facility_id, patient_blood_group, component,
-                   units_requested, urgency, clinical_note="") -> EmergencyRequest:
+                   units_requested, urgency, clinical_note="", client_request_id=None) -> EmergencyRequest:
     """
     Raise a request, match it and auto-hold the top site's units, in one step.
     Raised → Matching → UnitsHeld → AwaitingDecision, or Matching → HandledManually
     when no safe compatible stock exists.
+    A repeated client_request_id for the same user raises IntegrityError (the view returns the original).
     """
     req = EmergencyRequest.objects.create(
         requesting_facility_id=requesting_facility_id, raised_by=user,
         patient_blood_group=patient_blood_group, component=component,
         units_requested=units_requested, urgency=urgency, clinical_note=clinical_note,
-        status=S.RAISED,
+        client_request_id=client_request_id, status=S.RAISED,
     )
     record(
         action="request_raised", actor=user, request=req, object_type="request", object_id=req.pk,
@@ -126,16 +169,28 @@ def create_request(*, user, requesting_facility_id, patient_blood_group, compone
     )
     transition(req, S.MATCHING)
 
-    # Another request may grab the same unit between matching and holding; the
-    # database constraint catches that and we match again without those units.
+    # Race guard. Matching reads the active holds, ranks, then holds the top
+    # site's units. If another request reserved one of those units in between,
+    # the one-active-hold-per-unit constraint refuses the insert; the savepoint
+    # rolls this attempt back and we match again, now excluding those units.
+    # (On SQLite, transactions start IMMEDIATE — see settings — so concurrent
+    # requests queue for the write lock and this rarely triggers; on PostgreSQL
+    # the constraint + retry is what keeps two requests off the same unit.)
     for attempt in range(1, MAX_MATCH_ATTEMPTS + 1):
         try:
             with transaction.atomic():
                 _match_and_hold(req)
             return req
         except IntegrityError:
-            if attempt == MAX_MATCH_ATTEMPTS:
-                raise
+            record(action="hold_conflict_retry", request=req, object_type="request", object_id=req.pk,
+                   after={"attempt": attempt},
+                   reason="Units were reserved by another request during matching; matching again")
+
+    # Never fail silently: hand over to a person, with the reason on record.
+    transition(req, S.HANDLED_MANUALLY, reason=(
+        f"Units kept being reserved by other requests during matching ({MAX_MATCH_ATTEMPTS} attempts). "
+        "Handle by phone or raise the request again."
+    ))
     return req
 
 
@@ -243,6 +298,7 @@ def decide(req: EmergencyRequest, *, actor, action: str, option_id=None, reason=
     change: move the hold to another ranked site (409 if its units were just taken).
     reject: release the hold; the request is handled manually.
     Accept and change then apply the authorisation tier from config.
+    Callers run expire_stale_holds() first, in its own transaction.
     """
     req = _locked(req)
     require_status(req, DECIDABLE, action)
@@ -300,6 +356,7 @@ def authorise(req: EmergencyRequest, *, actor, action: str, reason="") -> Emerge
     approve / reject: per-transfer requests waiting in AwaitingAuthorisation.
     stop:   standing-route requests already sent to the supplier, before the lab releases.
     review: after-the-fact review of a standing-route request; audit only.
+    Callers run expire_stale_holds() first, in its own transaction.
     """
     req = _locked(req)
 

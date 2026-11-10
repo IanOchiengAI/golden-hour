@@ -34,6 +34,14 @@ ranking_shortlist: 12
 # arrival, the receiving lab is told to quarantine the units.
 coolbox_max_temp_c: 10
 
+# Units held for a request that is still waiting for the blood bank officer or
+# MoH are released after this long, and the request is handed over to be
+# handled by phone. Stops one account from locking scarce units (e.g. all O−).
+hold_ttl_min: 30
+
+# Most requests one facility can have open (not yet dispatched) at once.
+max_open_requests_per_facility: 10
+
 # Upper limit on units in one request (input validation).
 max_units_per_request: 10
 

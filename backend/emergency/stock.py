@@ -50,23 +50,26 @@ def facilities() -> dict[str, dict]:
     return {r["facility_id"]: dict(r) for r in rows}
 
 
+_CANDIDATE_UNITS_SQL = """
+    SELECT u.unit_id, u.component, u.blood_group, u.expiry_date, u.status,
+           u.temp_excursion_exposed, u.current_facility_id,
+           d.screening_result, d.tested_date
+    FROM units u
+    LEFT JOIN donations d ON d.donation_id = u.donation_id
+    WHERE u.status = 'in_stock' AND u.component = ? AND u.blood_group IN ({marks})
+"""
+
+
 def candidate_units(component: str, blood_groups: list[str]) -> list[dict]:
     """In-stock units of the component and groups, with their donation's screening result."""
     if not blood_groups:
         return []
+    # Only a run of "?" placeholders is inserted into the SQL text; every value
+    # (component and blood groups) is passed as a bound parameter below.
     marks = ",".join("?" * len(blood_groups))
+    sql = _CANDIDATE_UNITS_SQL.format(marks=marks)  # nosec B608 - placeholders only, values are bound
     with connect() as con:
-        rows = con.execute(
-            f"""
-            SELECT u.unit_id, u.component, u.blood_group, u.expiry_date, u.status,
-                   u.temp_excursion_exposed, u.current_facility_id,
-                   d.screening_result, d.tested_date
-            FROM units u
-            LEFT JOIN donations d ON d.donation_id = u.donation_id
-            WHERE u.status = 'in_stock' AND u.component = ? AND u.blood_group IN ({marks})
-            """,
-            (component, *blood_groups),
-        ).fetchall()
+        rows = con.execute(sql, (component, *blood_groups)).fetchall()
     return [dict(r) for r in rows]
 
 

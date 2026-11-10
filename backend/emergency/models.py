@@ -79,6 +79,9 @@ class EmergencyRequest(models.Model):
 
     requesting_facility_id = models.CharField(max_length=16)
     raised_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    # Set by the client (e.g. a UUID from the offline outbox). Sending the same
+    # id again returns this request instead of raising a second one.
+    client_request_id = models.CharField(max_length=64, null=True, blank=True)
     patient_blood_group = models.CharField(max_length=8, choices=PATIENT_GROUP_CHOICES)
     component = models.CharField(max_length=4, choices=Component.choices)
     units_requested = models.PositiveSmallIntegerField()
@@ -98,6 +101,14 @@ class EmergencyRequest(models.Model):
     escalated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["raised_by", "client_request_id"], condition=models.Q(client_request_id__isnull=False),
+                name="one_request_per_client_id_per_user",
+            )
+        ]
 
     def __str__(self):
         return f"#{self.pk} {self.component} {self.patient_blood_group} x{self.units_requested} ({self.status})"

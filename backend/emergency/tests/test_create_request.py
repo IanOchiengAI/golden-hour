@@ -6,7 +6,7 @@ from rest_framework.test import APIClient
 from emergency.models import AuditEvent, EmergencyRequest, Status, UnitHold
 from emergency.rules import RED_CELL_DONORS
 
-from .helpers import Actors, needs_starter_data
+from .helpers import Actors, model_offline, needs_starter_data
 
 
 @needs_starter_data
@@ -82,7 +82,7 @@ class CreateRequestTests(Actors, TestCase):
         self.assertFalse(UnitHold.objects.exists())
 
     def test_works_when_model_is_offline(self):
-        with mock.patch("emergency.matching.model_available", return_value=False):
+        with model_offline():
             body = self.raise_request().json()
         self.assertEqual(body["eta_method"], "fallback")
         req = EmergencyRequest.objects.get(pk=body["id"])

@@ -15,6 +15,11 @@ class CreateRequestSerializer(serializers.Serializer):
     units_requested = serializers.IntegerField(min_value=1)
     urgency = serializers.ChoiceField(choices=Urgency.choices)
     clinical_note = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+    # Optional idempotency key, e.g. a UUID the offline outbox generates once per request.
+    client_request_id = serializers.RegexField(
+        r"^[A-Za-z0-9._:-]{8,64}$", required=False, allow_null=True, default=None,
+        error_messages={"invalid": "Use 8–64 letters, digits, '.', '_', ':' or '-' (a UUID works)."},
+    )
 
     def validate_units_requested(self, value):
         limit = int(get_config().get("max_units_per_request", 10))
@@ -34,9 +39,9 @@ class RequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmergencyRequest
         fields = [
-            "id", "requesting_facility_id", "patient_blood_group", "component", "units_requested",
-            "urgency", "clinical_note", "status", "compatible_groups", "warnings", "eta_method",
-            "created_at", "updated_at",
+            "id", "client_request_id", "requesting_facility_id", "patient_blood_group", "component",
+            "units_requested", "urgency", "clinical_note", "status", "compatible_groups", "warnings",
+            "eta_method", "created_at", "updated_at",
         ]
 
 

@@ -4,7 +4,7 @@ from django.test import TestCase
 
 from emergency.models import AuditEvent, RankedOption, UnitHold
 
-from .helpers import Actors, needs_starter_data
+from .helpers import Actors, model_offline, needs_starter_data
 
 
 @needs_starter_data
@@ -46,7 +46,7 @@ class OptionsTests(Actors, TestCase):
         self.assertEqual(counts(), before)
 
     def test_fallback_flag_shown(self):
-        with mock.patch("emergency.matching.model_available", return_value=False):
+        with model_offline():
             req_id = self.raise_request().json()["id"]
         body = self.get(req_id=req_id).json()
         self.assertTrue(body["ai_offline"])

@@ -11,7 +11,7 @@ officer can decide.
 matching with auto-hold, officer decision, MoH authorisation (standing or
 per-transfer, from config), supplier release or decline (next site held),
 transport status, audit log and `GET /audit`, work-queue lists for every screen,
-view-only Django admin. 85 tests, including two end-to-end runs (one with the
+view-only Django admin, hold expiry, idempotent requests, token expiry, CORS. 110 tests, including two end-to-end runs (one with the
 model offline).
 **Not built yet:** escalation timers, SMS, readiness (see [What's next](#whats-next)).
 
@@ -158,7 +158,7 @@ a request takes about 1–2 seconds.
 python manage.py test
 ```
 
-Expected: `Ran 85 tests … OK` (about 3–4 minutes).
+Expected: `Ran 110 tests … OK` (about 6–7 minutes).
 
 | File | Covers |
 |---|---|
@@ -169,6 +169,8 @@ Expected: `Ran 85 tests … OK` (about 3–4 minutes).
 | `emergency/tests/test_decision_authorise.py` | Accept / change / reject, authorisation tier from config, units-just-taken 409, MoH approve / reject / stop / review, wrong-status 409, roles, no patient fields in the dispatch |
 | `emergency/tests/test_dispatch.py` | Lab confirm (units consumed, never offered again), decline → next site, decline everywhere → handled manually, facility checks, in transit → received, warm cool box warning |
 | `emergency/tests/test_end_to_end.py` | Raised → received through the API (with MoH approval; and with the model offline plus a supplier decline), checking every status and role in `GET /audit`; audit endpoint access and errors |
+| `emergency/tests/test_ml_integration.py` | `as_of` and `national_group_stock` sent to ranking, method from ranked results, hold race (re-match; hand over after 3 conflicts) |
+| `emergency/tests/test_review_fixes.py` | Hold expiry (incl. not rolled back by a 409; dispatched units never expire), per-user rate limit, per-facility cap, idempotent `client_request_id`, CORS, token expiry |
 | `emergency/tests/test_lists.py` | `GET /requests` (clinician sees own hospital only, filters, bad filters, summary row, query count fixed), `GET /requests/{id}` (options + hold, 404 across hospitals), `GET /dispatches` (supplying lab and receiving clinician only, no patient fields, status filter) |
 
 A `RuntimeError: boom` traceback in the output is **expected**: one test
@@ -315,7 +317,7 @@ and is written to the audit log as `access_denied`.
 | `403` | Your role cannot call this endpoint, you are not at the right facility, or your account has no facility | `{"detail": "Your role cannot perform this action."}` |
 | `404` | Request, option or dispatch does not exist | `{"detail": "..."}` |
 | `409` | Wrong status for this action, or the chosen site's units were just reserved for another request | `{"detail": "Request 7 is SentToSupplier; 'reject' needs AwaitingDecision or Escalated."}` |
-| `429` | Too many login attempts (default 10/min) | `{"detail": "Request was throttled..."}` |
+| `429` | Too many login attempts (10/min), too many requests raised by one user (10/min), or the facility has too many open requests | `{"detail": "Request was throttled..."}` or a plain message |
 | `503` | Starter database missing or empty | `{"detail": "... Run: python backend/scripts/build_starter_db.py"}` |
 
 ---
@@ -333,6 +335,7 @@ Response `200`:
 ```json
 {
   "token": "9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b",
+  "expires_at": "2026-11-11T10:40:00+03:00",
   "username": "officer@goldenhour.health",
   "role": "blood_bank_officer",
   "facility_id": "RBTC-NBO"
@@ -341,6 +344,10 @@ Response `200`:
 
 `role` is one of `clinician`, `blood_bank_officer`, `moh_officer`, `lab_officer`.
 Wrong username or password → `401`.
+
+Tokens expire after `TOKEN_TTL_HOURS` (default 12). An expired token gets `401`
+`{"detail": "Your session has expired. Please log in again."}`; logging in again
+issues a new token.
 
 ---
 
@@ -359,10 +366,23 @@ Request:
 | `units_requested` | integer | yes | 1 to `max_units_per_request` (10) |
 | `urgency` | string | yes | `life_threatening`, `urgent`, `routine` |
 | `clinical_note` | string | no | up to 500 characters |
+| `client_request_id` | string | no, **recommended** | 8–64 of `A-Z a-z 0-9 . _ : -` — generate a UUID once per request |
 
 ```json
-{"patient_blood_group": "unknown", "component": "RBC", "units_requested": 1, "urgency": "life_threatening"}
+{"patient_blood_group": "unknown", "component": "RBC", "units_requested": 1, "urgency": "life_threatening",
+ "client_request_id": "3f2b8c1e-5d4a-4e7b-9a10-2c6d8e9f0a1b"}
 ```
+
+**Retries are safe with `client_request_id`.** Sending the same id again (e.g.
+the response was lost on 2G) returns the original request with `200` instead of
+raising a second request and holding more units. The same id with different
+details → `409`. Ids are per user.
+
+**Limits** (to stop one account locking scarce units such as all O−):
+- per user: `RAISE_REQUEST_THROTTLE_RATE` (default 10/min) → `429`
+- per facility: at most `max_open_requests_per_facility` (10) open requests → `429`
+- holds expire: a request waiting more than `hold_ttl_min` (30) for the officer
+  or MoH has its hold released and moves to `HandledManually`
 
 Response `201`:
 ```json
@@ -385,7 +405,8 @@ Response `201`:
 
 - `status` is `AwaitingDecision` (units held at the top site) or
   `HandledManually` (no safe, compatible stock anywhere).
-- `eta_method` is `model` or `fallback` (model offline; route table used).
+- `eta_method` is `model` or `fallback` (any site's ETA came from the route
+  table — show the "AI offline" banner), or `""` when there was no stock to rank.
 - Platelets with `unknown` group → `400` (the patient must be grouped first).
 
 ---
@@ -704,6 +725,8 @@ Rules change here, not in code. Keys the backend reads:
 | `options_count` | Ranked sites shown to the officer |
 | `ranking_shortlist` | Nearest sites sent to the model |
 | `max_units_per_request` | Input limit |
+| `hold_ttl_min` | Minutes a hold waits for the officer or MoH before it is released (30) |
+| `max_open_requests_per_facility` | Open requests one facility may have at once (10) |
 | `supplying_facility_types` | Facility types allowed to send blood |
 
 To use another country, copy the file and set `COUNTRY_CONFIG` to its path.
@@ -719,6 +742,9 @@ To use another country, copy the file and set `COUNTRY_CONFIG` to its path.
 | `STARTER_DB_PATH` | the kit's `blood_system.sqlite` | Opened read-only |
 | `APP_DB_PATH` | `backend/app.sqlite3` | Users, requests, holds, audit |
 | `LOGIN_THROTTLE_RATE` | `10/min` | Login rate limit |
+| `RAISE_REQUEST_THROTTLE_RATE` | `10/min` | `POST /requests` limit per user |
+| `TOKEN_TTL_HOURS` | `12` | Auth token lifetime |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Frontend origins allowed to call the API from a browser; add the deployed frontend URL |
 | `DEMO_PASSWORD` | `demo2026` | Used by `seed_demo_users` |
 | `WARM_ML_MODEL` | `1` | Set `0` to skip loading the model at start-up |
 | `OPENBLAS_NUM_THREADS` | `1` (set in settings) | Limits numpy's maths threads; more threads ran out of memory |
@@ -778,7 +804,10 @@ backend/
 | `OpenBLAS error: Memory allocation still failed` | Low memory. Settings already limit numpy to one thread; also stop other `runserver` processes and close heavy apps. |
 | `$env:...: command not found` | You are in Git Bash, not PowerShell. Use the macOS/Linux commands (`export VAR=value`, forward slashes). |
 | `git status` shows `blood_system.sqlite` modified | Expected after rebuilding. Do not commit it (see step 2.2). |
-| Frontend gets CORS errors | No CORS middleware yet. Use a Vite dev proxy to `http://localhost:8000`. |
+| Frontend gets CORS errors | Add the frontend's origin (scheme + host + port, no trailing slash) to `CORS_ALLOWED_ORIGINS`. The Vite dev server on port 5173 is allowed by default. |
+| `401` "session has expired" | Tokens last `TOKEN_TTL_HOURS` (12). Log in again. |
+| `429` on `POST /requests` | Rate limit (10/min per user) or the facility has 10 open requests. Close some, or raise `max_open_requests_per_facility` in config. |
+| A request went to `HandledManually` on its own | Its hold waited longer than `hold_ttl_min` (30). `GET /audit` shows `hold_expired`. |
 
 ## What's next
 
@@ -789,4 +818,4 @@ Full plan with details: [`docs/backend-spec.md`](../docs/backend-spec.md).
 | Escalation timers | — | Decision not made in 5 min → `Escalated`, backup officer alerted (add-on) |
 | SMS (Africa's Talking) | — | Status updates from approved templates only (add-on) |
 | `GET /readiness` | officer, MoH | Hospital × blood group readiness map (add-on) |
-| Security hardening, deployment | — | CORS, `check --deploy`, gunicorn/whitenoise |
+| Deployment support | — | `check --deploy`, gunicorn/whitenoise; cron `python manage.py expire_holds` |
