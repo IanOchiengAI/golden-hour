@@ -33,6 +33,7 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS ix_units_avail ON units (status, component, blood_group, current_facility_id)",
     "CREATE INDEX IF NOT EXISTS ix_routes_pair ON routes (from_facility_id, to_facility_id)",
     "CREATE INDEX IF NOT EXISTS ix_daily_stock ON daily_stock (date, facility_id)",
+    "CREATE INDEX IF NOT EXISTS ix_donations_id ON donations (donation_id)",
 ]
 
 

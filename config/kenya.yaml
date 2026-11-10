@@ -27,6 +27,8 @@ authorisation_escalation_min: 10
 
 # Ranked sites shown to the blood bank officer.
 options_count: 3
+# Nearest sites (by route table) passed to the ETA model for ranking.
+ranking_shortlist: 12
 
 # Upper limit on units in one request (input validation).
 max_units_per_request: 10
