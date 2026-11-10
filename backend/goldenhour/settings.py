@@ -10,6 +10,12 @@ import os
 import sys
 from pathlib import Path
 
+# One maths thread per process. The ETA model predicts one route at a time, so
+# extra BLAS threads add memory but no speed; with several threads, OpenBLAS ran
+# out of memory on a dev laptop. Must be set before numpy is first imported.
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
+
 BASE_DIR = Path(__file__).resolve().parent.parent   # backend/
 REPO_ROOT = BASE_DIR.parent                          # golden-hour/
 
