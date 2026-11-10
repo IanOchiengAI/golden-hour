@@ -87,6 +87,14 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": os.environ.get("APP_DB_PATH", str(BASE_DIR / "app.sqlite3")),
+        "OPTIONS": {
+            # Each transaction takes the write lock when it starts, so two
+            # requests matching at once queue up instead of racing for the
+            # same units (and instead of failing with "database is locked").
+            "transaction_mode": "IMMEDIATE",
+            # Wait up to 20 s for the lock; matching takes ~1–2 s per request.
+            "timeout": 20,
+        },
     }
 }
 

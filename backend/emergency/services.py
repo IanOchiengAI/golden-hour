@@ -126,16 +126,28 @@ def create_request(*, user, requesting_facility_id, patient_blood_group, compone
     )
     transition(req, S.MATCHING)
 
-    # Another request may grab the same unit between matching and holding; the
-    # database constraint catches that and we match again without those units.
+    # Race guard. Matching reads the active holds, ranks, then holds the top
+    # site's units. If another request reserved one of those units in between,
+    # the one-active-hold-per-unit constraint refuses the insert; the savepoint
+    # rolls this attempt back and we match again, now excluding those units.
+    # (On SQLite, transactions start IMMEDIATE — see settings — so concurrent
+    # requests queue for the write lock and this rarely triggers; on PostgreSQL
+    # the constraint + retry is what keeps two requests off the same unit.)
     for attempt in range(1, MAX_MATCH_ATTEMPTS + 1):
         try:
             with transaction.atomic():
                 _match_and_hold(req)
             return req
         except IntegrityError:
-            if attempt == MAX_MATCH_ATTEMPTS:
-                raise
+            record(action="hold_conflict_retry", request=req, object_type="request", object_id=req.pk,
+                   after={"attempt": attempt},
+                   reason="Units were reserved by another request during matching; matching again")
+
+    # Never fail silently: hand over to a person, with the reason on record.
+    transition(req, S.HANDLED_MANUALLY, reason=(
+        f"Units kept being reserved by other requests during matching ({MAX_MATCH_ATTEMPTS} attempts). "
+        "Handle by phone or raise the request again."
+    ))
     return req
 
 

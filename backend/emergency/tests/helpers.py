@@ -1,4 +1,6 @@
+import contextlib
 import unittest
+from unittest import mock
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -11,6 +13,19 @@ starter_data_ready = settings.STARTER_DB_PATH.exists() and settings.STARTER_DB_P
 needs_starter_data = unittest.skipUnless(
     starter_data_ready, "Run backend/scripts/build_starter_db.py to build the starter data"
 )
+
+
+@contextlib.contextmanager
+def model_offline():
+    """
+    Make the ETA model fail to load, as if eta_model.pkl were missing.
+    predict_eta then uses the route table and reports method="fallback".
+    ml.ranking is imported first so its module-level ETA cap is read from the
+    real model, not from this simulated outage.
+    """
+    import ml.ranking  # noqa: F401
+    with mock.patch("ml.predict._load_model", side_effect=OSError("eta_model.pkl not available")):
+        yield
 
 
 def make_user(username, role, facility_id=""):

@@ -10,7 +10,7 @@ from rest_framework.test import APIClient
 
 from emergency.models import Status
 
-from .helpers import Actors, needs_starter_data
+from .helpers import Actors, model_offline, needs_starter_data
 
 S = Status
 
@@ -80,7 +80,7 @@ class EndToEndTests(Actors, TestCase):
 
     def test_life_threatening_with_model_offline_and_a_supplier_decline(self):
         # Model offline: ranking falls back to the route table; the flow still completes.
-        with mock.patch("emergency.matching.model_available", return_value=False):
+        with model_offline():
             req = self.ok(self.raise_request(urgency="life_threatening", units_requested=1), 201)
         rid = req["id"]
         self.assertEqual(req["eta_method"], "fallback")

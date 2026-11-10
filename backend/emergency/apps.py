@@ -15,5 +15,5 @@ class EmergencyConfig(AppConfig):
         # migrate/test/etc.; set WARM_ML_MODEL=0 to turn it off.
         serving = "runserver" in sys.argv or "gunicorn" in os.path.basename(sys.argv[0])
         if serving and os.environ.get("WARM_ML_MODEL", "1") == "1":
-            from .matching import model_available
-            threading.Thread(target=model_available, daemon=True, name="warm-eta-model").start()
+            from .matching import warm_model
+            threading.Thread(target=warm_model, daemon=True, name="warm-eta-model").start()
