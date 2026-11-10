@@ -57,12 +57,13 @@ FEATURE_COLS = [
 _model_cache = None
 
 
-def _load_model():
+def _load_model() -> dict:
+    """Load the full model payload from disk (cached after first call)."""
     global _model_cache
     if _model_cache is None:
         with open(MODEL_PATH, "rb") as f:
             _model_cache = pickle.load(f)
-    return _model_cache["rf"]
+    return _model_cache
 
 
 def _get_route(source_id: str, dest_id: str) -> dict | None:
@@ -129,7 +130,10 @@ def predict_eta(
 
     # ── 2. Try the ML model ───────────────────────────────────────────────
     try:
-        rf = _load_model()
+        payload = _load_model()
+        rf      = payload["rf"]
+        q05     = payload["q05"]   # conformal lower offset (usually negative)
+        q95     = payload["q95"]   # conformal upper offset (usually positive)
 
         X = np.array([[
             route["road_km"],
@@ -140,18 +144,39 @@ def predict_eta(
             CONNECTIVITY_ENC.get(route["connectivity"], 1),
         ]])
 
-        # Get individual tree predictions for the uncertainty range
-        # Using 5th–95th percentile for an honest wide range
-        tree_preds = np.array([tree.predict(X)[0] for tree in rf.estimators_])
-        low  = float(np.percentile(tree_preds, 5))
-        mid  = float(np.percentile(tree_preds, 50))
-        high = float(np.percentile(tree_preds, 95))
+        # Point prediction (median)
+        mid = float(rf.predict(X)[0])
 
-        return round(max(low, 1), 1), round(mid, 1), round(high, 1), "model"
+        # Conformal prediction interval — calibrated on a held-out set so that
+        # ~90% of real outcomes fall inside [low, high].
+        # low  = mid + q05  (q05 is a negative offset: model tends to over-predict by this)
+        # high = mid + q95
+        low  = mid + q05
+        high = mid + q95
+
+        # Safety floor: low ≥ 1 min, high > low
+        low  = max(low, 1.0)
+        high = max(high, low + 1.0)
+
+        return round(low, 1), round(mid, 1), round(high, 1), "model"
 
     except Exception:
         # Model offline or error — fall back to table lookup
         return _fallback(route["typical_travel_hours"])
+
+
+def get_eta_cap() -> float:
+    """
+    Return the ETA normalisation cap in minutes (95th percentile of training actuals).
+    Used by ranking.py so the cost function reflects the realistic worst-case,
+    not an arbitrary 12-hour ceiling.
+    Falls back to 240 min (4 h) if the model is not loaded.
+    """
+    try:
+        payload = _load_model()
+        return payload.get("eta_cap", 240.0)
+    except Exception:
+        return 240.0
 
 
 def explain_eta(

@@ -40,12 +40,18 @@ Usage for Roland (Django API):
 
 from datetime import datetime, date
 from typing import List, Dict, Any, Optional
-from ml.predict import predict_eta, explain_eta
+from ml.predict import predict_eta, explain_eta, get_eta_cap
 
 # Dataset as-of date — use this instead of date.today() for expiry calculations.
 # The starter dataset runs to 2026-10-31. Using today() makes units look ~10 days
 # closer to expiry than they really are (critical for PLT with a 5-day shelf life).
 DATA_AS_OF = date(2026, 10, 31)
+
+# ETA normalisation cap — loaded from the trained model at import time.
+# This is the 95th percentile of actual transfer times in the training data,
+# so differences within the realistic range (e.g. 30 vs 90 min) meaningfully
+# move the cost score. Falls back to 240 min if model is not loaded yet.
+_ETA_CAP_MINUTES: float = get_eta_cap()
 
 # Shelf life in days for FEFO calculation
 MAX_SHELF_LIFE = {
@@ -66,19 +72,25 @@ def compute_dispatch_score(
     expiry_date_str: str,
     component: str,
     as_of: Optional[date] = None,
+    eta_cap: Optional[float] = None,
 ) -> float:
     """
     Computes scalar penalty cost for a candidate. Lower score = better recommendation.
 
     Args:
-        as_of: Reference date for expiry calculation. Defaults to DATA_AS_OF
-               (2026-10-31, the dataset snapshot date). Roland passes
-               config["data_as_of"] so this never drifts with the wall clock.
+        as_of:   Reference date for expiry calculation. Defaults to DATA_AS_OF
+                 (2026-10-31, the dataset snapshot date). Roland passes
+                 config["data_as_of"] so this never drifts with the wall clock.
+        eta_cap: ETA normalisation ceiling in minutes. Defaults to the value
+                 learned from the training data (95th percentile of actuals).
+                 Using a realistic cap (e.g. 180 min) instead of 720 min means
+                 a 30 vs 60 min difference actually moves the cost score.
     """
-    reference_date = as_of or DATA_AS_OF
+    reference_date  = as_of or DATA_AS_OF
+    cap             = eta_cap if eta_cap is not None else _ETA_CAP_MINUTES
 
-    # 1. Normalized ETA (0 to 1, capped at 12 hours)
-    eta_norm = min(max(eta_mid_minutes, 0.0) / 720.0, 1.0)
+    # 1. Normalized ETA (0 to 1, capped at the realistic worst-case horizon)
+    eta_norm = min(max(eta_mid_minutes, 0.0) / cap, 1.0)
 
     # 2. Scarcity score (higher penalty when stock of this group is critically low)
     scarcity_score = 1.0 / (float(group_stock_count) + 1.0)
@@ -166,6 +178,7 @@ def rank_candidates(
             expiry_date_str=cand["expiry_date"],
             component=component,
             as_of=as_of,
+            eta_cap=_ETA_CAP_MINUTES,
         )
 
         # 3. Generate plain language reason

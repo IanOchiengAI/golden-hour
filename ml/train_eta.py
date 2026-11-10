@@ -8,12 +8,19 @@ Beats the baseline (routes.typical_travel_hours table lookup) by learning
 patterns the fixed table cannot see: road degradation, transport mode,
 time of day, and connectivity at the destination.
 
+Interval calibration (conformal prediction):
+  The raw RF tree spread gives only ~19% coverage — far too narrow.
+  We hold out a calibration set, compute signed residuals
+  (actual − predicted) on it, then store the 5th/95th percentile of
+  those residuals. At inference time we add them to the point estimate
+  to produce intervals that actually cover ~90% of real outcomes.
+
 Run this once:
     python -m ml.train_eta
 
 Output:
     ml/eta_model.pkl        — saved model (loaded by predict.py)
-    prints baseline vs model MAE for the README
+    prints baseline vs model MAE + coverage for the README
 """
 
 import os
@@ -108,6 +115,12 @@ def load_training_data() -> pd.DataFrame:
 def train() -> dict:
     """
     Train the ETA model and save it to disk.
+
+    Split strategy (3-way):
+      60% train  — model fitting
+      20% calib  — conformal interval calibration (never seen by the model)
+      20% test   — final honest evaluation
+
     Returns a dict of evaluation metrics.
     """
     print("Loading training data...")
@@ -116,14 +129,19 @@ def train() -> dict:
 
     X = df[FEATURE_COLS].values
     y = df["actual_minutes"].values
+    baseline_col = df["typical_travel_hours"].values * 60  # minutes
 
-    X_train, X_test, y_train, y_test, df_train, df_test = train_test_split(
-        X, y, df, test_size=0.2, random_state=42
+    # ── 3-way split: 60 / 20 / 20 ────────────────────────────────────────
+    # First cut off 40% for calib+test, then split that in half.
+    X_train, X_tmp, y_train, y_tmp, base_train, base_tmp = train_test_split(
+        X, y, baseline_col, test_size=0.40, random_state=42
+    )
+    X_calib, X_test, y_calib, y_test, base_calib, base_test = train_test_split(
+        X_tmp, y_tmp, base_tmp, test_size=0.50, random_state=42
     )
 
-    # ── Baseline: use typical_travel_hours from the routes table ─────────
-    baseline_preds = df_test["typical_travel_hours"].values * 60  # convert to minutes
-    baseline_mae   = mean_absolute_error(y_test, baseline_preds)
+    # ── Baseline ─────────────────────────────────────────────────────────
+    baseline_mae = mean_absolute_error(y_test, base_test)
 
     # ── Model ─────────────────────────────────────────────────────────────
     print("Training Random Forest (200 trees)...")
@@ -136,27 +154,55 @@ def train() -> dict:
     )
     rf.fit(X_train, y_train)
 
-    model_preds = rf.predict(X_test)
-    model_mae   = mean_absolute_error(y_test, model_preds)
-    improvement  = (baseline_mae - model_mae) / baseline_mae * 100
+    model_preds_test = rf.predict(X_test)
+    model_mae        = mean_absolute_error(y_test, model_preds_test)
+    improvement      = (baseline_mae - model_mae) / baseline_mae * 100
 
-    # ── Interval coverage: how often does actual fall inside (low, high)? ─
-    tree_preds   = np.array([t.predict(X_test) for t in rf.estimators_])  # (200, n_test)
-    low_preds    = np.percentile(tree_preds, 5, axis=0)
-    high_preds   = np.percentile(tree_preds, 95, axis=0)
-    coverage     = np.mean((y_test >= low_preds) & (y_test <= high_preds)) * 100
+    # ── Conformal interval calibration ────────────────────────────────────
+    # Compute signed residuals on the held-out calibration set.
+    # residual = actual − predicted  (positive = model under-predicted)
+    # We store the 5th and 95th percentiles of these residuals.
+    # At inference: low  = point_pred + q05  (q05 is typically negative)
+    #               high = point_pred + q95
+    # This guarantees ~90% marginal coverage on the population.
+    model_preds_calib = rf.predict(X_calib)
+    residuals         = y_calib - model_preds_calib
+    q05               = float(np.percentile(residuals, 5))
+    q95               = float(np.percentile(residuals, 95))
+
+    # ── Verify coverage on the test set ──────────────────────────────────
+    low_calib  = model_preds_test + q05
+    high_calib = model_preds_test + q95
+    coverage   = float(np.mean((y_test >= low_calib) & (y_test <= high_calib)) * 100)
+
+    # ── ETA normalisation horizon ─────────────────────────────────────────
+    # The 95th percentile of actual transfer times in the dataset tells us
+    # the realistic worst-case. We use this as the ranking cap instead of a
+    # hard-coded 12h (720 min) so that differences inside the realistic range
+    # (e.g. 30 vs 60 min) actually move the cost score.
+    p95_actual = float(np.percentile(y_train, 95))
 
     metrics = {
-        "n_train":        len(X_train),
-        "n_test":         len(X_test),
-        "baseline_mae":   round(baseline_mae, 2),
-        "model_mae":      round(model_mae, 2),
-        "improvement_pct":round(improvement, 1),
+        "n_train":               len(X_train),
+        "n_calib":               len(X_calib),
+        "n_test":                len(X_test),
+        "baseline_mae":          round(baseline_mae, 2),
+        "model_mae":             round(model_mae, 2),
+        "improvement_pct":       round(improvement, 1),
         "interval_coverage_pct": round(coverage, 1),
+        "conformal_q05":         round(q05, 2),
+        "conformal_q95":         round(q95, 2),
+        "eta_norm_cap_minutes":  round(p95_actual, 1),
     }
 
     # ── Save model ────────────────────────────────────────────────────────
-    payload = {"rf": rf, "metrics": metrics}
+    payload = {
+        "rf":      rf,
+        "q05":     q05,
+        "q95":     q95,
+        "eta_cap": p95_actual,
+        "metrics": metrics,
+    }
     with open(MODEL_PATH, "wb") as f:
         pickle.dump(payload, f)
 
@@ -170,17 +216,22 @@ if __name__ == "__main__":
     elapsed = (datetime.now() - start).seconds
 
     print()
-    print("=" * 55)
+    print("=" * 60)
     print("  RESULTS (copy these into README and slides)")
-    print("=" * 55)
+    print("=" * 60)
     print(f"  Training samples : {metrics['n_train']:,}")
+    print(f"  Calibration      : {metrics['n_calib']:,}")
     print(f"  Test samples     : {metrics['n_test']:,}")
     print()
     print(f"  Baseline MAE     : {metrics['baseline_mae']:.1f} min  (routes table lookup)")
     print(f"  Model MAE        : {metrics['model_mae']:.1f} min  (Random Forest)")
     print(f"  Improvement      : {metrics['improvement_pct']:.1f}%")
     print()
-    print(f"  Interval coverage: {metrics['interval_coverage_pct']:.1f}%  (actual inside low–high range)")
+    print(f"  Interval coverage: {metrics['interval_coverage_pct']:.1f}%  (target ≥ 90%)")
+    print(f"  Conformal offsets: q05={metrics['conformal_q05']:.1f} min,  q95={metrics['conformal_q95']:.1f} min")
+    print(f"  ETA ranking cap  : {metrics['eta_norm_cap_minutes']:.0f} min  (95th pct of actuals)")
+    print()
     print(f"  Training time    : {elapsed}s")
     print(f"  Model saved to   : {MODEL_PATH}")
-    print("=" * 55)
+    print("=" * 60)
+
