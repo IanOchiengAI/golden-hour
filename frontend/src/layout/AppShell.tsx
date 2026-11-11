@@ -1,10 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   Bell, ClipboardCheck, FileText, History, LayoutDashboard, List, LogOut, Map, Menu, Package, PlusCircle, ShieldCheck,
   Truck, X,
 } from 'lucide-react'
 import type { Dispatch, EmergencyRequest, RequestStatus, Role } from '../types'
 import { api } from '../api/client'
+import { reachability } from '../reachability'
+import { outbox } from '../offlineClient'
 import { useAuth, type TestRole } from '../context/AuthContext'
 import { usePolled } from '../hooks/useData'
 import { lastDispatchSite } from '../hooks/usePolling'
@@ -216,7 +218,11 @@ const UserMenu: React.FC = () => {
               ))}
             </div>
           )}
-          <button type="button" onClick={() => signOut()} className="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center gap-2">
+          <button type="button" onClick={() => {
+              const n = outbox.unsentCount()
+              if (n > 0 && !window.confirm(`${n} request(s) are NOT SENT and stay on this device until you sign in again. Sign out anyway?`)) return
+              signOut()
+            }} className="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center gap-2">
             <LogOut className="w-4 h-4" /> Sign out
           </button>
         </div>
@@ -230,7 +236,9 @@ export const AppShell: React.FC<{ section: string; children: React.ReactNode }> 
   const [drawer, setDrawer] = useState(false)
   const notes = useNotifications(user!.role)
   const items = NAV[user!.role]
-  const connected = apiConnected && isOnline
+  useSyncExternalStore(reachability.subscribe, reachability.version)
+  const serverDown = reachability.state() === 'unreachable'
+  const connected = apiConnected && isOnline && !serverDown
 
   const nav = (
     <nav aria-label="Sections" className="flex flex-col gap-0.5 p-3">
@@ -309,8 +317,8 @@ export const AppShell: React.FC<{ section: string; children: React.ReactNode }> 
         <span
           className={`w-2.5 h-2.5 rounded-full ${connected ? 'bg-emerald-500' : 'bg-red-500'}`}
           role="img"
-          aria-label={connected ? 'Connected' : 'Not connected'}
-          title={connected ? 'Connected' : 'Not connected'}
+          aria-label={connected ? 'Connected' : serverDown ? 'Server not answering' : 'Not connected'}
+          title={connected ? 'Connected' : serverDown ? 'Server not answering' : 'Not connected'}
         />
         <Bellmenu items={notes} />
         <UserMenu />
