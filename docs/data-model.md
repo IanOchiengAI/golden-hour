@@ -198,7 +198,7 @@ Dispatch responses carry a fixed list of supplier-safe fields (`SUPPLIER_SAFE_DI
 
 ## 7. Country rules (`config/kenya.yaml`)
 
-Rules that differ by country sit in a YAML file, not in code. The file is chosen with the `COUNTRY_CONFIG` environment variable. It is read once per process, so a change needs a restart. Only `kenya.yaml` exists today; a second country file has not been written.
+Rules that differ by country sit in a YAML file, not in code. The file is chosen with the `COUNTRY_CONFIG` environment variable. It is read once per process, so a change needs a restart. `kenya.yaml` is the default; `config/uganda.yaml` is a sample second country (see `config/README.md`).
 
 | Key | Read by code today | Effect |
 |---|---|---|
