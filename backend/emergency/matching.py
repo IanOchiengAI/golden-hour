@@ -33,19 +33,13 @@ class MatchResult:
 
 
 # ── ML layer (Ian's ml/ package) ─────────────────────────────────────────
-def model_available() -> bool:
-    """
-    True if the ETA model loads. ml.predict.predict_eta() falls back silently, so
-    the backend checks the model itself to report method = model | fallback.
-    (Uses ml.predict._load_model until predict_eta reports its method.)
-    """
+def warm_model() -> None:
+    """Load the ETA model in the background at server start (it takes several seconds)."""
     try:
-        from ml.predict import _load_model
-        _load_model()
-        return True
+        from ml.predict import get_eta_cap
+        get_eta_cap()   # public call that loads and caches the model
     except Exception:
-        log.exception("ETA model unavailable; using route-table fallback")
-        return False
+        log.exception("ETA model could not be loaded; requests will use the route-table fallback")
 
 
 def _ml_rank(requesting_facility_id, candidates, component, dispatch_time):
@@ -56,7 +50,14 @@ def _ml_rank(requesting_facility_id, candidates, component, dispatch_time):
         component=component,
         dispatch_time=dispatch_time,
         top_n=len(candidates),
+        as_of=data_as_of(),   # dataset date from config, not the wall clock
     )
+
+
+def _overall_method(ranked) -> str:
+    """'model' only if every ranked site's ETA came from the model; otherwise 'fallback'."""
+    methods = {r.get("eta_method") for r in ranked}
+    return MODEL if methods == {MODEL} else FALLBACK
 
 
 def _fallback_rank(candidates, routes):
@@ -111,8 +112,7 @@ def match(*, requesting_facility_id, patient_blood_group, component, units_reque
     )
     result.sites_considered = len(offers)
     if not offers:
-        result.method = MODEL if model_available() else FALLBACK
-        return result
+        return result   # no ETAs were needed, so method stays ""
 
     # 3. Shortlist the nearest sites by the route table; the model refines those.
     routes = stock.routes_to(requesting_facility_id)
@@ -137,16 +137,15 @@ def match(*, requesting_facility_id, patient_blood_group, component, units_reque
             "grid_reliability": f["grid_reliability"],
         })
 
-    # 4. Rank: model if it loads and ranking succeeds, otherwise route-table fallback.
-    ranked, method = None, FALLBACK
-    if model_available():
-        try:
-            ranked, method = _ml_rank(requesting_facility_id, candidates, component, dispatch_time), MODEL
-        except Exception:
-            log.exception("ML ranking failed; using route-table fallback")
-    if ranked is None:
-        ranked = _fallback_rank(candidates, routes)
-    result.method = method
+    # 4. Rank with ml.ranking. Each ranked site reports eta_method ("model" or
+    #    "fallback" when predict_eta used the route table). If ranking itself
+    #    fails, the backend ranks by the route table so the workflow keeps going.
+    try:
+        ranked = _ml_rank(requesting_facility_id, candidates, component, dispatch_time)
+    except Exception:
+        log.exception("ML ranking failed; using route-table fallback")
+        ranked = [{**r, "eta_method": FALLBACK} for r in _fallback_rank(candidates, routes)]
+    result.method = _overall_method(ranked)
 
     # 5. Sites with enough units first, partial sites after (order within each kept).
     ranked.sort(key=lambda r: by_site[r["facility_id"]].is_partial(units_requested))
@@ -166,7 +165,7 @@ def match(*, requesting_facility_id, patient_blood_group, component, units_reque
             "eta_low_min": r["eta_low_min"],
             "eta_mid_min": r["eta_mid_min"],
             "eta_high_min": r["eta_high_min"],
-            "method": method,
+            "method": r.get("eta_method") or FALLBACK,
             "reason": r["reason"],
             "warnings": option_warnings,
             "units_available": offer.units_available,

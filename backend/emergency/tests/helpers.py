@@ -1,6 +1,9 @@
+import contextlib
 import unittest
+from unittest import mock
 
 from django.conf import settings
+from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
@@ -11,6 +14,19 @@ starter_data_ready = settings.STARTER_DB_PATH.exists() and settings.STARTER_DB_P
 needs_starter_data = unittest.skipUnless(
     starter_data_ready, "Run backend/scripts/build_starter_db.py to build the starter data"
 )
+
+
+@contextlib.contextmanager
+def model_offline():
+    """
+    Make the ETA model fail to load, as if eta_model.pkl were missing.
+    predict_eta then uses the route table and reports method="fallback".
+    ml.ranking is imported first so its module-level ETA cap is read from the
+    real model, not from this simulated outage.
+    """
+    import ml.ranking  # noqa: F401
+    with mock.patch("ml.predict._load_model", side_effect=OSError("eta_model.pkl not available")):
+        yield
 
 
 def make_user(username, role, facility_id=""):
@@ -30,10 +46,27 @@ class Actors:
 
     def setUp(self):
         super().setUp()
+        cache.clear()   # rate-limit counters live in the cache; start each test fresh
         self.clinician = make_user("clin", Role.CLINICIAN, "HSP-002")
         self.officer = make_user("officer", Role.BLOOD_BANK_OFFICER, "RBTC-NBO")
+        self.moh = make_user("moh", Role.MOH_OFFICER)
         self.clin_api = client_for(self.clinician)
         self.officer_api = client_for(self.officer)
+        self.moh_api = client_for(self.moh)
+        self._lab_apis = {}
+
+    def lab_api(self, facility_id):
+        """API client for a lab officer at the given supplying facility."""
+        if facility_id not in self._lab_apis:
+            user = make_user(f"lab-{facility_id}", Role.LAB_OFFICER, facility_id)
+            self._lab_apis[facility_id] = client_for(user)
+        return self._lab_apis[facility_id]
+
+    def decide(self, req_id, **body):
+        return self.officer_api.post(f"/requests/{req_id}/decision", body, format="json")
+
+    def authorise(self, req_id, **body):
+        return self.moh_api.post(f"/requests/{req_id}/authorise", body, format="json")
 
     def raise_request(self, **over):
         body = {"patient_blood_group": "O+", "component": "RBC", "units_requested": 2,

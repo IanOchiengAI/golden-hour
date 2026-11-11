@@ -42,7 +42,10 @@
 | 2026-11-10 16:15 | Ian | Pre-build review. Tech stack NOT yet decided. No code committed. Build starts 16:30. |
 | 2026-11-10 16:30–17:16 | Ian | Full data exploration complete. All 4 cleaning rules verified against real data. ETA model trained and pushed to GitHub. |
 | 2026-11-10 ~17:30–19:20 | Roland (via Claude Code) | Backend on `ft/backend`: Django + DRF scaffold, token auth + roles, audit log, rules engine + tests, `POST /requests` (matching + auto-hold at creation), `GET /requests/{id}/options` (read-only). 35 tests pass. Found `blood_system.sqlite` committed as 0 bytes; added rebuild script. |
-| 2026-11-10 ~19:30–22:00 | Ian (via Antigravity) | Full ML iteration session. Emergency-weighted training (3×/2×/1×). Conformal calibration on emergency+urgent subset only (n=1,028) → 91.1% emergency coverage (was 73%). Final numbers: Overall MAE 14.5 min (20.7% better), Emergency MAE 30.8 min (25.8% better). Thread-safe model cache. 4-tuple predict_eta return (low, mid, high, method). `as_of` param in ranking. Data-driven ETA cap (602 min). `docs/ian-numbers.md` written. `docs/e2e_test.py` written and pushed. Replied to Roland's GitHub issue #4 (commit 055cf35 + b7284d0 + 6748755). |
+| 2026-11-10 ~20:30 | Roland, Ian | PRs #1 and #2 merged `ft/backend` into `main`. `docs/backend-spec.md` written (remaining backend work, in order). |
+| 2026-11-10 21:00 | Team | Plan update: cut rule active (no add-ons until the flow works); new gate = backend raised → received with tests by 23:30; Claude edits only `backend/` and `config/`. |
+| 2026-11-10 ~21:00–21:50 | Roland (via Claude Code) | **Backend flow complete, raised → received.** `/decision`, `/authorise` (tier from `kenya.yaml`), `Dispatch` + `/release` (decline → next site), `/status`, `GET /audit`. 72 tests incl. two end-to-end runs (one with model offline + supplier decline). `scripts/try_flow.py` walks the flow against a live server. Interval coverage measured at 19.2% (see blockers). |
+| 2026-11-10 21:15–22:20 | Amanya | Frontend built on branch `front-end`: React 19 + TypeScript + Vite + Tailwind CSS. 6 core views wired: Clinician request form, Blood Bank Officer decision (with honest ETA range, 5m timer, Accept/Change/Reject), MoH authorisation tier, Supplying Lab dispatch (supplier-safe, no patient fields), Audit trail explorer (KDPA), and 47-facility stock readiness grid. Vite proxy configured to `http://localhost:8000`. Clean TypeScript build verified. |
 
 ---
 
@@ -58,14 +61,7 @@
 - [x] **`ml/train_eta.py`** — trains Random Forest on 34,135 clean transfers. Run once to produce `eta_model.pkl`
 - [x] **`ml/predict.py`** — Roland imports this. `predict_eta(source_id, dest_id, now)` → `(low, mid, high)` in minutes. Auto-fallback to table lookup if model offline.
 - [x] **`ml/eta_model.pkl`** — trained model saved to repo
-- [x] Baseline vs model numbers confirmed (final, emergency-weighted): **Overall: Baseline 18.3 → Model 14.5 min (20.7% better), coverage 96.2%. Emergency: Baseline 41.5 → Model 30.8 min (25.8% better), coverage 91.1% ✅**
-- [x] **`ml/predict.py`** — thread-safe (Lock + double-checked locking), returns 4-tuple `(low, mid, high, method)`, conformal intervals (q05/q95 from emergency calib set), `_fmt_minutes()`, `get_eta_cap()`, `explain_eta()` with optional `route=` param
-- [x] **`ml/ranking.py`** — `DATA_AS_OF=date(2026,10,31)`, `_ETA_CAP_MINUTES` from model, `rank_candidates` takes `as_of`, passes `route=` to `explain_eta`, exposes `eta_method` in result dict, scarcity warning for O−
-- [x] **`ml/train_eta.py`** — 3-way 60/20/20 split, urgency join, emergency 3×/urgent 2× sample weights, emergency+urgent conformal calibration, full metrics breakdown
-- [x] **`ml/eta_model.pkl`** — retrained with keys: `rf`, `q05`, `q95`, `eta_cap`, `metrics`
-- [x] **`docs/ian-numbers.md`** — final numbers table, model card, pitch sentence, judge Q&A answers
-- [x] **`docs/e2e_test.py`** — black-box end-to-end API test script (pushed, commit 6748755)
-- [x] **GitHub issue #4** — replied to Roland (Dancode-188) with updated numbers and confirmation of both fixes
+- [x] Baseline vs model numbers confirmed: **Baseline 17.8 min MAE → Model 14.1 min MAE → 20.6% improvement**
 - [x] **Backend (`backend/`, branch `ft/backend`)** — see `backend/README.md` for run steps and API shapes
   - Django 5.2 + DRF; token login `POST /auth/login` (rate-limited); role check on every endpoint; logins, failed logins and refused calls audited
   - Append-only `AuditEvent`; `EmergencyRequest`, `RankedOption`, `UnitHold` (DB allows one active hold per unit)
@@ -75,53 +71,71 @@
   - Fallback: if the model won't load or ranking throws, backend ranks by route table ±20% with `method = fallback`
   - `config/kenya.yaml` created with `data_as_of: 2026-10-31`, `emergency_authorisation`, urgency targets, escalation minutes, `options_count`, `ranking_shortlist`
   - `backend/scripts/build_starter_db.py` rebuilds `blood_system.sqlite` from the CSVs (adds indexes)
-  - Demo users: `python manage.py seed_demo_users` (clinician / officer / backup.officer / moh / lab `@goldenhour.health`, password `demo2026`)
+  - Demo users: `python manage.py seed_demo_users` (clinician / officer / backup.officer / moh / lab `@goldenhour.health`, plus `lab.<facility id>@goldenhour.health` for every facility; password `demo2026`)
+  - `POST /requests/{id}/decision` — officer accept / change (moves the hold; 409 if units just taken) / reject; then the authorisation tier: life-threatening + `standing` → SentToSupplier with MoH notified, otherwise AwaitingAuthorisation
+  - `POST /requests/{id}/authorise` — MoH approve / reject / stop (standing, before release) / review
+  - `Dispatch` model; `POST /dispatches/{id}/release` — lab at the supplying site only; confirm → Dispatched (units consumed, never re-offered); decline → next free site held, back to the officer
+  - `POST /dispatches/{id}/status` — in_transit (supplying lab), received (clinician at the requesting hospital); cool box above `coolbox_max_temp_c` → quarantine warning + audit
+  - `GET /audit?request_id=` — officer and MoH only (events contain patient fields)
+  - Supplying labs never see patient fields (supplier-safe dispatch serializer, tested)
+  - Wrong-status actions → 409 with a plain message
+  - 72 tests; two end-to-end tests; `backend/scripts/try_flow.py` for a live walkthrough
+
+---
+
+- [x] **Frontend (`frontend/`, branch `amanya`)** — React + TypeScript + Vite + Tailwind CSS
+  - Vite dev proxy configured to `http://localhost:8000` (no CORS issues)
+  - Clinician request form with rapid presets (Maternity PPH, Trauma Uncrossmatched), compatibility preview, unknown blood group warning, and arrival temperature check (&gt;10°C excursion alert)
+  - Blood Bank Officer Decision screen: calls `GET /requests/{id}/options`, displays honest ETA ranges (`low_min` - `high_min`), AI vs Fallback status banner, 5-minute escalation countdown, and mandatory Accept / Change (with reason) / Reject (with reason)
+  - MoH Regional Authorisation screen: standing emergency oversight, urgent sign-off, emergency stop veto
+  - Supplying Lab Officer station: supplier-safe view (strictly masks patient blood group and clinical notes per KDPA), packaging, transport mode selection (motorbike courier vs vehicle), release and transit update
+  - Append-only audit trail timeline explorer (`GET /audit?request_id=`)
+  - 47-facility readiness grid with power reliability and scarce O- stock indicators
+  - African conditions support: 2G/3G low-data mode toggle and offline localStorage queue
 
 ---
 
 ## In Progress 🔄
 
-- [ ] Frontend scaffold (Amanya) — can switch `POST /requests` and `GET /options` from mocks to the real API now
-- [ ] Backend next: `POST /requests/{id}/decision` (Accept / Change moves hold / Reject releases), `/authorise`, `/dispatches/{id}/release`, `/dispatches/{id}/status`, `GET /audit`
+- [ ] Connect live backend endpoints to frontend once backend server is booted locally
+- [ ] Backend list endpoints (`GET /requests`, `GET /dispatches`)
+- [ ] ML fixes (Ian) — ETA range, ranking, method flag, `data_as_of`
 
 ---
 
 ## Next Up 📋
 
-**Backend (Roland), toward the 22:00 gate:**
-1. Merge `ft/backend` to `main` (checkpoint)
-2. `POST /requests/{id}/decision` — Accept / Change (moves hold to chosen option) / Reject (releases hold → HandledManually), reason required for Change/Reject
-3. `POST /requests/{id}/authorise` — tier from `emergency_authorisation`; standing + life-threatening skips to SentToSupplier with MoH notified
-4. `Dispatch` model, `POST /dispatches/{id}/release` (decline → release hold, auto-hold next-ranked site), `POST /dispatches/{id}/status`
-5. `GET /audit?request_id=`
-6. Supplier view must hide patient fields
+**Backend (Roland):**
+1. List endpoints so screens can find their work: `GET /requests`, `GET /requests/{id}`, `GET /dispatches` (spec piece 1). Until then the lab gets the dispatch id from the `/decision` or `/authorise` response.
+2. After the 23:30 gate passes: escalation timers, then SMS (spec pieces 7–8), per the cut rules.
+3. Security hardening and deployment support (spec pieces 12–13): CORS, `check --deploy`, gunicorn/whitenoise.
 
-**Frontend (Amanya):** request form + officer screen against the real `POST /requests` and `GET /options`
+**Frontend (Amanya):** clinician form, officer screen (Accept / Change / Reject), MoH screen, supplying lab screen, status tracking — all endpoints exist.
 
-**By Tue 22:00 gate:**
-- Dispatch flow end-to-end (or stop all add-ons and fix it)
+**Gate (Tue 23:30):** backend raised → received with tests — **met** (72 tests passing).
 
 ---
 
 ## Open Blockers 🚧
 
 - [x] ~~Tech stack not decided~~ — Django + DRF, SQLite (see CLAUDE.md)
-- [ ] **`blood_system.sqlite` is a 0-byte file in git.** Everyone (incl. `ml/predict.py`, which reads routes from it) must run `python backend/scripts/build_starter_db.py` once. Do **not** commit the rebuilt file (~100 MB, over GitHub's limit) — leave it unstaged.
-- [ ] **Daniel not yet online** — joins ~19:00; needs handoff doc ready
+- [ ] **`blood_system.sqlite` is a 0-byte file in git.** Everyone (incl. `ml/predict.py`, which reads routes from it) must run `python backend/scripts/build_starter_db.py` once. Do **not** commit the rebuilt file (~53 MB, over GitHub's 50 MB warning) — leave it unstaged, or `git update-index --skip-worktree` it. Decide with Ian/Daniel whether to remove it from git and ignore it.
+- [ ] **ETA interval coverage is 19.2%** (from the metrics saved in `ml/eta_model.pkl`): only 1 in 5 real test deliveries falls inside (low, high). Target ~90%. Ian is widening the range.
+- [ ] **No frontend code in the repo yet** (no `frontend/` on any branch at 20:55). Amanya.
+- [ ] **Docs not started:** architecture diagram, FHIR mapping, second-country config, data map / DPIA / incident plan, deployment. Root README and `docs/TARGET_SUBMISSION_SPEC.md` still say FastAPI. Daniel.
 
 ## Notes for owners (from backend integration)
 
-**Ian (`ml/`) — all items below are FIXED as of 22:00 EAT:**
-- ✅ `compute_dispatch_score()` / `rank_candidates` now take `as_of=date(2026,10,31)` — no more date.today() drift
-- ✅ `predict_eta()` returns 4-tuple `(low, mid, high, method)` — backend no longer needs to call `_load_model()`
-- ✅ `rank_candidates` result dicts include `eta_method: "model"|"fallback"`
-- ✅ Emergency coverage: 91.1% (was 73%) via emergency-subset conformal calibration
-- ⚠️ **For Roland:** when calling `rank_candidates`, pass `as_of=date(2026, 10, 31)` and include `national_group_stock` in candidate dicts (WARNING fires if missing). Read `result["eta_method"]` instead of calling `_load_model()`.
-- ⚠️ **Race condition (not Ian's to fix):** rank+hold sequence is not atomic — two simultaneous requests can race for the same O− unit. Roland needs `select_for_update()` in a transaction.
+**Ian (`ml/`) — not edited by backend:**
+- `ml/ranking.py` `compute_dispatch_score()` uses `date.today()` for days-to-expiry. It should use the data as-of date (`data_as_of: 2026-10-31` in `config/kenya.yaml`); today every unit looks ~10 days closer to expiry than the data says. Suggest an `as_of: date` parameter the backend can pass.
+- `predict_eta()` still falls back silently. Backend works out `method` by calling `ml.predict._load_model()` itself (private function) — please return `method` from `predict_eta` so the backend can drop that.
+- `rank_candidates` docstring still shows `patient_blood_group=` (not a parameter).
+- Speed: model load ~5–9 s (backend warms it at server start); ~30 ms per site after. `predict_eta`/`explain_eta` open two SQLite connections per call. Backend sends only the 12 nearest sites (by route table) to `rank_candidates`.
+- Possible model saturation: HSP-002 request got exactly 436.0 min ETA for five different sites (HSP-020/018/012/019, RBTC-ELD).
 
 **Daniel (`config/`):** `config/kenya.yaml` was created by backend with the keys it reads (see file comments). Add the sample second country by copying it; switch with env `COUNTRY_CONFIG`.
 
-**Amanya (`frontend/`):** API has no `/api` prefix and no trailing slashes (`/requests`, `/requests/1/options`). No CORS middleware yet — use a Vite dev proxy to `http://localhost:8000`. Response shapes in `backend/README.md`.
+**Amanya (`frontend/`):** API has no `/api` prefix and no trailing slashes (`/requests`, `/requests/1/options`). No CORS middleware yet — use a Vite dev proxy to `http://localhost:8000`. Every endpoint, request body and response is in `backend/README.md` §7. Lab screens must log in as the lab officer of the dispatch's `from_facility_id` (e.g. `lab.hsp-001@goldenhour.health`). Errors to handle: 400 (field messages), 403, 404, 409 (wrong status / units just taken — show the `detail` text).
 
 **Data gaps:** the dataset has no quarantine flag; "untested" is enforced by requiring the unit's donation to be screened `non_reactive` with a `tested_date`. Supported components are RBC, PLT, FFP (what the requests data uses); WB and CRYO are not requestable yet.
 
@@ -139,9 +153,7 @@
 | SMS | Africa's Talking sandbox | Roland owns | 2026-11-10 |
 | Config | YAML per country | kenya.yaml + one sample; proves config-not-code | 2026-11-10 |
 
-**Pending decisions (resolve at 16:30):**
-- Backend framework: Django + DRF (team plan) vs FastAPI (Ian's preference — less boilerplate)
-- Database: PostgreSQL (team plan) vs SQLite (already loaded — saves setup time)
+**Decided:** Django + DRF; SQLite for the build, PostgreSQL as the production target (architecture diagram only).
 
 ---
 
