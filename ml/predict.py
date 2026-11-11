@@ -181,7 +181,7 @@ def predict_eta(
         return round(low, 1), round(mid, 1), round(high, 1), "model"
 
     except Exception:
-        # Model offline or error — fall back to table lookup
+        logger.warning("predict_eta ML error — falling back to table lookup", exc_info=True)
         return _fallback(route["typical_travel_hours"])
 
 
@@ -261,7 +261,7 @@ if __name__ == "__main__":
     print()
     for source, dest, label in test_cases:
         low, mid, high, method = predict_eta(source, dest, datetime.now())
-        if mid:
+        if mid is not None:
             print(f"  {label}  [{method}]")
             print(f"    → {low:.0f}–{mid:.0f}–{high:.0f} min")
             print(f"    → {explain_eta(source, dest, low, mid, high, 3, 'O-', '2026-11-14')}")

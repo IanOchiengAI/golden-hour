@@ -40,7 +40,10 @@ Usage for Roland (Django API):
 
 from datetime import datetime, date
 from typing import List, Dict, Any, Optional
+import logging
 from ml.predict import predict_eta, explain_eta, get_eta_cap, _get_route
+
+logger = logging.getLogger(__name__)
 
 # Dataset as-of date — use this instead of date.today() for expiry calculations.
 # The starter dataset runs to 2026-10-31. Using today() makes units look ~10 days
@@ -172,16 +175,15 @@ def rank_candidates(
         if mid is None:
             continue  # No road connection found
 
-        # Route already fetched inside predict_eta; re-fetch once here for explain_eta.
-        # This is one connection per facility (not two) because predict_eta's internal
-        # _get_route result is not exposed. Total: 1 connection per facility evaluated.
+        # Route is fetched a second time here (predict_eta fetches it internally and
+        # does not expose it). That's 2 SQLite opens per facility — acceptable for
+        # a 47-facility scan (~94 opens total, all sub-ms on local SQLite).
         route = _get_route(source_id, requesting_facility_id)
 
         # 2. Compute cost score (use dataset as-of date, not today)
         nat_stock = cand.get("national_group_stock", cand.get("units_available_at_facility", 5))
         if "national_group_stock" not in cand:
-            import logging
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "national_group_stock missing for %s — scarcity score will be per-facility only",
                 source_id,
             )
