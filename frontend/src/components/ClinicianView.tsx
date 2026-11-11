@@ -1,7 +1,9 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState, useSyncExternalStore } from 'react'
 import type { BloodGroup, BloodComponent, Urgency, EmergencyRequest } from '../types'
 import { api } from '../api/client'
 import { usePolling } from '../hooks/usePolling'
+import { outbox } from '../offlineClient'
+import { defaultNewId, describeItem } from '../offline/index.ts'
 import {
   Page, Card, Button, Choice, Notice, Label, Empty, Dialog, StatusChip, UrgencyChip, COMPONENT_LABEL, group,
   inputCls,
@@ -23,6 +25,10 @@ export const ClinicianView: React.FC<{ onRequestCreated?: (req: EmergencyRequest
   const [error, setError] = useState<string | null>(null)
   const [latestRequest, setLatestRequest] = useState<EmergencyRequest | null>(null)
   const [requestsList, setRequestsList] = useState<EmergencyRequest[]>([])
+  // One id per form, renewed when the form is finished with (see offline/README.md)
+  const [formId, setFormId] = useState<string>(defaultNewId)
+  const outboxVersion = useSyncExternalStore(outbox.subscribe, outbox.version)
+  const unsent = outbox.list().filter((i) => i.state !== 'delivered')
 
   // Arrival confirmation dialog state
   const [receiptModalReq, setReceiptModalReq] = useState<EmergencyRequest | null>(null)
@@ -45,7 +51,7 @@ export const ClinicianView: React.FC<{ onRequestCreated?: (req: EmergencyRequest
       const list = await api.getRequests({ limit: 20 })
       setRequestsList(list)
       setListError(null)
-      localStorage.setItem('gh_clinician_requests', JSON.stringify(list))
+      localStorage.setItem('gh_clinician_requests', JSON.stringify(list.map((r) => ({ ...r, clinical_note: undefined }))))
     } catch (err: unknown) {
       // Offline: show the last list we had, marked as such.
       setListError(err instanceof Error ? err.message : String(err))
@@ -65,32 +71,37 @@ export const ClinicianView: React.FC<{ onRequestCreated?: (req: EmergencyRequest
     setRequestsList((prev) => [newReq, ...prev.filter((r) => r.id !== newReq.id)])
   }
 
+  // A request the server accepted: just now, on a background retry, or while this page was not showing
+  useEffect(() => {
+    for (const item of outbox.takeDelivered()) {
+      const created = item.response as EmergencyRequest
+      setLatestRequest(created)
+      saveToLocal(created)
+      if (onRequestCreated) onRequestCreated(created)
+      if (item.id === formId) setFormId(defaultNewId())
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outboxVersion])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    setIsSubmitting(true)
+    setLatestRequest(null) // clear the old "sent" notice so it cannot be mistaken for this request
 
     // Validation
     if (bloodGroup === 'unknown' && component === 'PLT') {
       setError('Platelets cannot be requested for an unknown blood group. Group the patient first.')
-      setIsSubmitting(false)
       return
     }
 
+    const need = { patient_blood_group: bloodGroup, component, units_requested: units, urgency, clinical_note: clinicalNote }
+    const similar = outbox.unsentLike(need).filter((i) => i.id !== formId)
+    if (similar.length > 0 && !window.confirm('You already have an unsent request like this. Is this a second patient?')) return
+
+    setIsSubmitting(true)
     try {
-      const created = await api.createRequest({
-        patient_blood_group: bloodGroup,
-        component,
-        units_requested: units,
-        urgency,
-        clinical_note: clinicalNote,
-      })
-      setLatestRequest(created)
-      saveToLocal(created)
-      if (onRequestCreated) onRequestCreated(created)
-    } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      setError(`Not sent: ${errMsg} If this continues, call the blood bank.`)
+      const item = await outbox.submit(need, { id: formId })
+      if (item.state === 'rejected') setFormId(defaultNewId())
     } finally {
       setIsSubmitting(false)
     }
@@ -287,6 +298,22 @@ export const ClinicianView: React.FC<{ onRequestCreated?: (req: EmergencyRequest
 
         {/* Always visible, also on a phone */}
         <div className="sticky bottom-0 bg-slate-100 pt-3 pb-3 space-y-2">
+          {unsent.slice(0, 2).map((item) => {
+            const d = describeItem(item)
+            return (
+              <div key={item.id} role="alert" data-testid="outbox-banner" data-state={item.state}>
+                <Notice tone={d.tone === 'bad' ? 'error' : d.tone}>
+                  <span className="block font-semibold">{d.headline}</span>
+                  <span className="block">{d.detail}</span>
+                  <span className="mt-2 flex gap-2">
+                    {d.canRetry && <Button type="button" onClick={() => void outbox.retry(item.id)} className="!h-8 !px-3 !text-xs">Retry</Button>}
+                    {item.state !== 'sending' && <Button type="button" onClick={() => outbox.remove(item.id)} className="!h-8 !px-3 !text-xs">Dismiss</Button>}
+                  </span>
+                </Notice>
+              </div>
+            )
+          })}
+          {unsent.length > 2 && <p className="text-xs text-slate-600">{unsent.length - 2} more not sent.</p>}
           {error && <Notice tone="error">{error}</Notice>}
           <Button type="submit" kind="primary" big disabled={isSubmitting} className="w-full">
             {isSubmitting ? 'Sending…' : 'Request blood'}

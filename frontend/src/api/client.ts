@@ -1,6 +1,8 @@
 import type {
   EmergencyRequest, OptionsResponse, Dispatch, DispatchActionResponse, AuditEvent, Role, RequestStatus,
 } from '../types'
+import { reachability } from '../reachability'
+import { GATEWAY_ERRORS } from '../offline/index.ts'
 
 // Demo users seeded in backend (python manage.py seed_demo_users). All synthetic.
 export const DEMO_CREDENTIALS = {
@@ -64,8 +66,10 @@ class ApiClient {
     try {
       response = await fetch(path, { ...options, headers })
     } catch {
+      reachability.record(false)
       throw new Error('Cannot reach the server. Check the connection.')
     }
+    reachability.record(!GATEWAY_ERRORS.includes(response.status))
     if (response.status === 401 && path !== '/auth/login' && this.onUnauthorized) {
       this.onUnauthorized()
     }
