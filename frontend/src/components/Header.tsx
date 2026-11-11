@@ -6,7 +6,16 @@ export const Header: React.FC<{ activeTab: string; setActiveTab: (tab: string) =
   activeTab,
   setActiveTab,
 }) => {
-  const { user, loginAs, isOnline, lowDataMode, setLowDataMode } = useAuth()
+  const { user, loginAs, isOnline, apiConnected, lowDataMode, setLowDataMode, error } = useAuth()
+
+  const handleRoleSwitch = async (roleKey: 'clinician' | 'officer' | 'moh' | 'lab') => {
+    try {
+      await loginAs(roleKey)
+      setActiveTab(roleKey)
+    } catch {
+      setActiveTab(roleKey)
+    }
+  }
 
   return (
     <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50">
@@ -57,7 +66,7 @@ export const Header: React.FC<{ activeTab: string; setActiveTab: (tab: string) =
                 Role:
               </span>
               <button
-                onClick={() => { loginAs('clinician'); setActiveTab('clinician') }}
+                onClick={() => handleRoleSwitch('clinician')}
                 className={`px-2.5 py-1 rounded transition-all font-medium ${
                   user?.role === 'clinician'
                     ? 'bg-rose-600 text-white shadow-sm'
@@ -68,7 +77,7 @@ export const Header: React.FC<{ activeTab: string; setActiveTab: (tab: string) =
                 Clinician
               </button>
               <button
-                onClick={() => { loginAs('officer'); setActiveTab('officer') }}
+                onClick={() => handleRoleSwitch('officer')}
                 className={`px-2.5 py-1 rounded transition-all font-medium ${
                   user?.role === 'blood_bank_officer'
                     ? 'bg-amber-600 text-white shadow-sm'
@@ -79,7 +88,7 @@ export const Header: React.FC<{ activeTab: string; setActiveTab: (tab: string) =
                 Officer
               </button>
               <button
-                onClick={() => { loginAs('moh'); setActiveTab('moh') }}
+                onClick={() => handleRoleSwitch('moh')}
                 className={`px-2.5 py-1 rounded transition-all font-medium ${
                   user?.role === 'moh_officer'
                     ? 'bg-blue-600 text-white shadow-sm'
@@ -90,7 +99,7 @@ export const Header: React.FC<{ activeTab: string; setActiveTab: (tab: string) =
                 MoH
               </button>
               <button
-                onClick={() => { loginAs('lab'); setActiveTab('lab') }}
+                onClick={() => handleRoleSwitch('lab')}
                 className={`px-2.5 py-1 rounded transition-all font-medium ${
                   user?.role === 'lab_officer'
                     ? 'bg-emerald-600 text-white shadow-sm'
@@ -104,15 +113,15 @@ export const Header: React.FC<{ activeTab: string; setActiveTab: (tab: string) =
 
             {/* African Conditions: Connectivity & 2G/3G Low Data Mode Toggle */}
             <div className="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800 text-xs">
-              {isOnline ? (
+              {apiConnected && isOnline ? (
                 <span className="flex items-center gap-1 text-emerald-400 font-medium text-[11px]">
                   <Wifi className="w-3.5 h-3.5" />
-                  <span>Online</span>
+                  <span>API Connected</span>
                 </span>
               ) : (
-                <span className="flex items-center gap-1 text-amber-400 font-medium text-[11px]">
+                <span className="flex items-center gap-1 text-rose-400 font-medium text-[11px]" title={error || 'Backend not responding on port 8000'}>
                   <WifiOff className="w-3.5 h-3.5" />
-                  <span>Offline PWA</span>
+                  <span>Backend Offline</span>
                 </span>
               )}
               <span className="text-slate-700">|</span>

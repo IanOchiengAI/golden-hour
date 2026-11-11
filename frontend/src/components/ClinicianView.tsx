@@ -1,13 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import type { BloodGroup, BloodComponent, Urgency, EmergencyRequest } from '../types'
 import { api } from '../api/client'
-import { useAuth } from '../context/AuthContext'
 import { AlertCircle, Clock, CheckCircle2, Send, Droplets, Thermometer, Sparkles, AlertTriangle } from 'lucide-react'
 
 export const ClinicianView: React.FC<{ onRequestCreated?: (req: EmergencyRequest) => void }> = ({
   onRequestCreated,
 }) => {
-  const { user } = useAuth()
   const [bloodGroup, setBloodGroup] = useState<BloodGroup>('O+')
   const [component, setComponent] = useState<BloodComponent>('RBC')
   const [units, setUnits] = useState<number>(2)
@@ -76,25 +74,8 @@ export const ClinicianView: React.FC<{ onRequestCreated?: (req: EmergencyRequest
       saveToLocal(created)
       if (onRequestCreated) onRequestCreated(created)
     } catch (err: unknown) {
-      console.warn('Real API unavailable, generating simulated offline emergency request:', err)
-      const simulated: EmergencyRequest = {
-        id: Math.floor(1000 + Math.random() * 9000),
-        requesting_facility_id: user?.facility_id || 'HSP-002',
-        requesting_facility_name: 'Kakamega County Referral Hospital',
-        patient_blood_group: bloodGroup,
-        component,
-        units_requested: units,
-        urgency,
-        clinical_note: clinicalNote || 'Acute haemorrhage emergency',
-        status: 'AwaitingDecision',
-        compatible_groups: bloodGroup === 'unknown' ? ['O-'] : [bloodGroup],
-        warnings: bloodGroup === 'unknown' ? ['Patient blood group unknown — recommending O− universal donor red cells. Confirm before dispatch; O− stock is critically low.'] : undefined,
-        eta_method: 'model',
-        created_at: new Date().toISOString(),
-      }
-      setLatestRequest(simulated)
-      saveToLocal(simulated)
-      if (onRequestCreated) onRequestCreated(simulated)
+      const errMsg = err instanceof Error ? err.message : String(err)
+      setError(`Request not sent: ${errMsg}. Please check server connection or call the blood bank directly.`)
     } finally {
       setIsSubmitting(false)
     }
