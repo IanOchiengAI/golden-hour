@@ -1,5 +1,4 @@
 import React, { useState } from 'react'
-import { MapPin, BatteryCharging, Droplet, Search } from 'lucide-react'
 
 interface FacilityStock {
   id: string
@@ -124,92 +123,270 @@ export const ReadinessGridView: React.FC = () => {
       f.county.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-      {/* Header */}
-      <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 text-rose-400 text-xs font-semibold uppercase tracking-wider">
-            <MapPin className="w-4 h-4 text-rose-500" />
-            National Blood Grid Network (47 Facilities)
-          </div>
-          <h2 className="text-xl font-bold text-white mt-1">Stock Readiness &amp; Infrastructure Telemetry</h2>
-          <p className="text-sm text-slate-400 mt-0.5">
-            Real-time multi-site inventory, cold chain power vulnerability, and scarce O− universal donor reserves.
-          </p>
-        </div>
+  const readinessColor = (status: 'green' | 'amber' | 'red'): string => {
+    if (status === 'green') return 'var(--safe)'
+    if (status === 'amber') return 'var(--warn)'
+    return 'var(--accent)'
+  }
 
-        {/* Search */}
-        <div className="relative w-full md:w-72">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-          <input
-            type="text"
-            placeholder="Search facility or county..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3.5 py-2 text-white text-xs focus:outline-none focus:border-rose-500"
-          />
+  const gridColor = (reliability: 'High' | 'Moderate' | 'Unstable'): string => {
+    if (reliability === 'High') return 'var(--safe)'
+    if (reliability === 'Moderate') return 'var(--warn)'
+    return 'var(--accent)'
+  }
+
+  // Summary stats
+  const totalONeg = facilities.reduce((sum, f) => sum + f.oNegUnits, 0)
+  const depleted = facilities.filter((f) => f.oNegUnits === 0).length
+  const unstableGrid = facilities.filter((f) => f.gridReliability === 'Unstable').length
+
+  const S = {
+    page: {
+      maxWidth: '1100px',
+      margin: '0 auto',
+      padding: '32px 24px',
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '24px',
+    },
+    pageHeader: {
+      borderBottom: '1px solid var(--rule)',
+      paddingBottom: '20px',
+      display: 'flex',
+      alignItems: 'flex-end' as const,
+      justifyContent: 'space-between' as const,
+      gap: '16px',
+      flexWrap: 'wrap' as const,
+    },
+    headerLeft: {
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '4px',
+    },
+    eyebrow: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      fontWeight: 600,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase' as const,
+      color: 'var(--muted)',
+    },
+    h2: {
+      fontSize: '20px',
+      fontWeight: 700,
+      color: 'var(--ink)',
+      margin: 0,
+    },
+    subtitle: {
+      fontSize: '13px',
+      color: 'var(--muted)',
+      marginTop: '2px',
+    },
+    searchInput: {
+      border: '1px solid var(--rule)',
+      borderRadius: '2px',
+      padding: '8px 12px',
+      fontSize: '13px',
+      color: 'var(--ink)',
+      background: '#fff',
+      outline: 'none',
+      width: '220px',
+    },
+    // Summary strip
+    summaryRow: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(3, 1fr)',
+      gap: '16px',
+    },
+    summaryCard: (color: string) => ({
+      border: '1px solid var(--rule)',
+      borderTop: `3px solid ${color}`,
+      borderRadius: '4px',
+      padding: '16px 20px',
+      background: 'var(--surface-raised)',
+    }),
+    summaryNum: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '28px',
+      fontWeight: 700,
+      color: 'var(--ink)',
+      lineHeight: 1.1,
+    },
+    summaryLabel: {
+      fontSize: '12px',
+      color: 'var(--muted)',
+      marginTop: '4px',
+    },
+    // Grid of facility cards
+    facilityGrid: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+      gap: '16px',
+    },
+    facilityCard: {
+      border: '1px solid var(--rule)',
+      borderRadius: '4px',
+      background: '#fff',
+      padding: '16px',
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '12px',
+    },
+    cardTop: {
+      display: 'flex',
+      justifyContent: 'space-between' as const,
+      alignItems: 'flex-start' as const,
+    },
+    facilityId: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      fontWeight: 700,
+      color: 'var(--muted)',
+    },
+    facilityName: {
+      fontSize: '13px',
+      fontWeight: 700,
+      color: 'var(--ink)',
+      lineHeight: 1.3,
+      marginTop: '4px',
+    },
+    facilitySub: {
+      fontSize: '11px',
+      color: 'var(--muted)',
+      marginTop: '2px',
+    },
+    statusDot: (status: 'green' | 'amber' | 'red') => ({
+      width: '10px',
+      height: '10px',
+      borderRadius: '50%',
+      background: readinessColor(status),
+      flexShrink: 0,
+      marginTop: '2px',
+    }),
+    stockSection: {
+      background: 'var(--surface-raised)',
+      border: '1px solid var(--rule)',
+      borderRadius: '2px',
+      padding: '10px 12px',
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '5px',
+    },
+    stockRow: {
+      display: 'flex',
+      justifyContent: 'space-between' as const,
+      alignItems: 'center' as const,
+      fontSize: '12px',
+    },
+    stockLabel: {
+      color: 'var(--muted)',
+    },
+    stockValue: (depleted: boolean): React.CSSProperties => ({
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontWeight: 700,
+      color: depleted ? 'var(--accent)' : 'var(--ink)',
+    }),
+    stockDivider: {
+      borderTop: '1px solid var(--rule)',
+      paddingTop: '5px',
+    },
+    stockTotal: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontWeight: 700,
+      color: 'var(--safe)',
+    },
+    infraRow: {
+      display: 'flex',
+      justifyContent: 'space-between' as const,
+      alignItems: 'center' as const,
+      fontSize: '11px',
+      color: 'var(--muted)',
+      borderTop: '1px solid var(--rule)',
+      paddingTop: '10px',
+    },
+    gridBadge: (reliability: 'High' | 'Moderate' | 'Unstable') => ({
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '10px',
+      fontWeight: 700,
+      color: gridColor(reliability),
+    }),
+    powerBadge: (hasBackup: boolean) => ({
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '10px',
+      fontWeight: 700,
+      color: hasBackup ? 'var(--safe)' : 'var(--accent)',
+    }),
+  }
+
+  return (
+    <div style={S.page}>
+      {/* Header */}
+      <div style={S.pageHeader}>
+        <div style={S.headerLeft}>
+          <span style={S.eyebrow}>National Blood Grid · 47 Facilities</span>
+          <h2 style={S.h2}>Stock Readiness & Infrastructure</h2>
+          <p style={S.subtitle}>Real-time inventory, cold chain power status, and O− universal donor reserves.</p>
+        </div>
+        <input
+          type="text"
+          placeholder="Search facility or county…"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          style={S.searchInput}
+        />
+      </div>
+
+      {/* Summary strip */}
+      <div style={S.summaryRow}>
+        <div style={S.summaryCard('var(--accent)')}>
+          <div style={S.summaryNum}>{totalONeg}</div>
+          <div style={S.summaryLabel}>Safe O− units across all facilities</div>
+        </div>
+        <div style={S.summaryCard('var(--warn)')}>
+          <div style={S.summaryNum}>{depleted}</div>
+          <div style={S.summaryLabel}>Facilities with zero O− stock</div>
+        </div>
+        <div style={S.summaryCard('var(--muted)')}>
+          <div style={S.summaryNum}>{unstableGrid}</div>
+          <div style={S.summaryLabel}>Facilities on unstable power grid</div>
         </div>
       </div>
 
-      {/* Grid of Facilities */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Facility cards */}
+      <div style={S.facilityGrid}>
         {filtered.map((f) => (
-          <div
-            key={f.id}
-            className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col justify-between space-y-3"
-          >
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="font-mono text-[11px] font-bold text-slate-400">{f.id}</span>
-                <span
-                  className={`w-2.5 h-2.5 rounded-full ${
-                    f.readinessStatus === 'green'
-                      ? 'bg-emerald-500 shadow-md shadow-emerald-500/50'
-                      : f.readinessStatus === 'amber'
-                      ? 'bg-amber-500 shadow-md shadow-amber-500/50'
-                      : 'bg-rose-500 shadow-md shadow-rose-500/50 animate-pulse'
-                  }`}
-                  title={`Readiness Status: ${f.readinessStatus.toUpperCase()}`}
-                />
+          <div key={f.id} style={S.facilityCard}>
+            <div style={S.cardTop}>
+              <div>
+                <div style={S.facilityId}>{f.id}</div>
+                <div style={S.facilityName}>{f.name}</div>
+                <div style={S.facilitySub}>{f.county} · {f.type}</div>
               </div>
-
-              <h4 className="text-sm font-bold text-white leading-tight">{f.name}</h4>
-              <p className="text-xs text-slate-400">{f.county} · {f.type}</p>
+              <div style={S.statusDot(f.readinessStatus)} title={`Readiness: ${f.readinessStatus.toUpperCase()}`} />
             </div>
 
-            {/* Blood Stocks */}
-            <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800/80 space-y-1.5 text-xs">
-              <div className="flex justify-between items-center">
-                <span className="text-slate-400 flex items-center gap-1">
-                  <Droplet className="w-3 h-3 text-rose-500" />
-                  Universal O−:
-                </span>
-                <span className={`font-mono font-bold ${f.oNegUnits === 0 ? 'text-rose-400' : 'text-slate-200'}`}>
-                  {f.oNegUnits} U {f.oNegUnits === 0 && '(DEPLETED)'}
+            <div style={S.stockSection}>
+              <div style={S.stockRow}>
+                <span style={S.stockLabel}>Universal O−</span>
+                <span style={S.stockValue(f.oNegUnits === 0)}>
+                  {f.oNegUnits} U{f.oNegUnits === 0 ? ' — DEPLETED' : ''}
                 </span>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-slate-400">Common O+:</span>
-                <span className="font-mono font-semibold text-slate-200">{f.oPosUnits} U</span>
+              <div style={S.stockRow}>
+                <span style={S.stockLabel}>Common O+</span>
+                <span style={S.stockValue(false)}>{f.oPosUnits} U</span>
               </div>
-              <div className="flex justify-between items-center border-t border-slate-800 pt-1 text-[11px]">
-                <span className="text-slate-400">Total Valid Stock:</span>
-                <span className="font-mono font-bold text-emerald-400">{f.totalUnits} units</span>
+              <div style={{ ...S.stockRow, ...S.stockDivider }}>
+                <span style={S.stockLabel}>Total valid stock</span>
+                <span style={S.stockTotal}>{f.totalUnits}</span>
               </div>
             </div>
 
-            {/* African Conditions: Power & Grid Reliability */}
-            <div className="flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800/60 pt-2">
-              <span className="flex items-center gap-1">
-                <BatteryCharging className={`w-3.5 h-3.5 ${f.backupPower ? 'text-emerald-400' : 'text-rose-400'}`} />
-                <span>{f.backupPower ? 'Generator: OK' : 'No Backup'}</span>
+            <div style={S.infraRow}>
+              <span style={S.powerBadge(f.backupPower)}>
+                {f.backupPower ? '⚡ Generator OK' : '✕ No backup power'}
               </span>
-              <span className={`font-medium ${
-                f.gridReliability === 'High' ? 'text-emerald-400' : f.gridReliability === 'Moderate' ? 'text-amber-400' : 'text-rose-400'
-              }`}>
-                Grid: {f.gridReliability}
-              </span>
+              <span style={S.gridBadge(f.gridReliability)}>Grid: {f.gridReliability}</span>
             </div>
           </div>
         ))}

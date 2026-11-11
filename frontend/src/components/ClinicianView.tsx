@@ -1,47 +1,55 @@
 import React, { useState, useEffect } from 'react'
 import type { BloodGroup, BloodComponent, Urgency, EmergencyRequest } from '../types'
 import { api } from '../api/client'
-import { AlertCircle, Clock, CheckCircle2, Send, Droplets, Thermometer, Sparkles, AlertTriangle } from 'lucide-react'
 
-export const ClinicianView: React.FC<{ onRequestCreated?: (req: EmergencyRequest) => void }> = ({
-  onRequestCreated,
-}) => {
+const S = {
+  page: { maxWidth: 1100, margin: '0 auto', padding: '32px 24px' } as React.CSSProperties,
+  label: { fontSize: 11, fontFamily: 'var(--mono)', textTransform: 'uppercase' as const, letterSpacing: '0.08em', color: 'var(--ink-faint)', marginBottom: 6, display: 'block' } as React.CSSProperties,
+  card: { background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, padding: 24 } as React.CSSProperties,
+  rule: { borderTop: '1px solid var(--rule)', margin: '20px 0' } as React.CSSProperties,
+  h2: { fontSize: 20, fontWeight: 600, letterSpacing: '-0.02em', margin: 0 } as React.CSSProperties,
+  muted: { fontSize: 13, color: 'var(--ink-muted)' } as React.CSSProperties,
+  fieldLabel: { fontSize: 12, fontWeight: 500, color: 'var(--ink-muted)', marginBottom: 6, display: 'block' } as React.CSSProperties,
+  input: {
+    width: '100%', padding: '9px 12px', fontSize: 14, borderRadius: 6,
+    border: '1px solid var(--rule)', background: 'var(--surface)', color: 'var(--ink)',
+    fontFamily: 'var(--sans)', outline: 'none',
+  } as React.CSSProperties,
+}
+
+const statusColor = (s: string) => {
+  if (s === 'Received') return { background: '#F0FDF4', color: '#15803D', border: '1px solid #BBF7D0' }
+  if (s === 'InTransit') return { background: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE' }
+  if (s === 'AwaitingDecision') return { background: '#FFFBEB', color: '#B45309', border: '1px solid #FDE68A' }
+  if (s === 'AwaitingAuthorisation') return { background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA' }
+  return { background: 'var(--surface-raised)', color: 'var(--ink-muted)', border: '1px solid var(--rule)' }
+}
+
+export const ClinicianView: React.FC<{ onRequestCreated?: (req: EmergencyRequest) => void }> = ({ onRequestCreated }) => {
   const [bloodGroup, setBloodGroup] = useState<BloodGroup>('O+')
   const [component, setComponent] = useState<BloodComponent>('RBC')
-  const [units, setUnits] = useState<number>(2)
+  const [units, setUnits] = useState(2)
   const [urgency, setUrgency] = useState<Urgency>('life_threatening')
-  const [clinicalNote, setClinicalNote] = useState<string>('')
+  const [clinicalNote, setClinicalNote] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [latestRequest, setLatestRequest] = useState<EmergencyRequest | null>(null)
   const [requestsList, setRequestsList] = useState<EmergencyRequest[]>([])
-  
-  // Arrival confirmation modal state
   const [receiptModalReq, setReceiptModalReq] = useState<EmergencyRequest | null>(null)
-  const [coolboxTemp, setCoolboxTemp] = useState<string>('4.5')
+  const [coolboxTemp, setCoolboxTemp] = useState('4.5')
   const [receiptWarning, setReceiptWarning] = useState<string | null>(null)
   const [isConfirmingReceipt, setIsConfirmingReceipt] = useState(false)
 
-  // Load existing requests from localStorage and backend
-  useEffect(() => {
-    loadRequests()
-  }, [])
+  useEffect(() => { loadRequests() }, [])
 
   const loadRequests = async () => {
     try {
       const res = await api.getRequests()
       const list = Array.isArray(res) ? res : res.results || []
-      if (list.length > 0) {
-        setRequestsList(list)
-        return
-      }
-    } catch {
-      // fallback to local cache
-    }
+      if (list.length > 0) { setRequestsList(list); return }
+    } catch { /* fallback */ }
     const cached = localStorage.getItem('gh_clinician_requests')
-    if (cached) {
-      setRequestsList(JSON.parse(cached))
-    }
+    if (cached) setRequestsList(JSON.parse(cached))
   }
 
   const saveToLocal = (newReq: EmergencyRequest) => {
@@ -51,511 +59,274 @@ export const ClinicianView: React.FC<{ onRequestCreated?: (req: EmergencyRequest
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError(null)
-    setIsSubmitting(true)
-
-    // Validation
+    e.preventDefault(); setError(null); setIsSubmitting(true)
     if (bloodGroup === 'unknown' && component === 'PLT') {
-      setError('Platelets cannot be requested for unknown blood group. Group the patient first.')
-      setIsSubmitting(false)
-      return
+      setError('Platelets require a known blood group. Group the patient first.')
+      setIsSubmitting(false); return
     }
-
     try {
-      const created = await api.createRequest({
-        patient_blood_group: bloodGroup,
-        component,
-        units_requested: units,
-        urgency,
-        clinical_note: clinicalNote,
-      })
-      setLatestRequest(created)
-      saveToLocal(created)
+      const created = await api.createRequest({ patient_blood_group: bloodGroup, component, units_requested: units, urgency, clinical_note: clinicalNote })
+      setLatestRequest(created); saveToLocal(created)
       if (onRequestCreated) onRequestCreated(created)
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      setError(`Request not sent: ${errMsg}. Please check server connection or call the blood bank directly.`)
-    } finally {
-      setIsSubmitting(false)
-    }
+      setError(err instanceof Error ? err.message : String(err))
+    } finally { setIsSubmitting(false) }
   }
 
   const handleConfirmArrival = async (req: EmergencyRequest) => {
-    setIsConfirmingReceipt(true)
-    setReceiptWarning(null)
+    setIsConfirmingReceipt(true); setReceiptWarning(null)
     const temp = parseFloat(coolboxTemp)
-    const dispatchId = req.dispatch_id || req.id
-
     try {
-      const res = await api.updateDispatchStatus(dispatchId, 'received', isNaN(temp) ? undefined : temp)
-      if (res.warning) {
-        setReceiptWarning(res.warning)
-      } else if (temp > 10.0) {
-        setReceiptWarning(`CRITICAL ALERT: Cool box temperature (${temp}°C) breached 10°C limit! Units must be placed in quarantine immediately.`)
-      }
-      const updated: EmergencyRequest = { ...req, status: 'Received' }
-      saveToLocal(updated)
-      setReceiptModalReq(null)
+      const res = await api.updateDispatchStatus(req.dispatch_id || req.id, 'received', isNaN(temp) ? undefined : temp)
+      if (res.warning) setReceiptWarning(res.warning)
+      else if (temp > 10.0) setReceiptWarning(`ALERT: Cool box ${temp}°C exceeds 10°C limit. Units must be quarantined immediately.`)
+      saveToLocal({ ...req, status: 'Received' }); setReceiptModalReq(null)
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      setReceiptWarning(`Confirmation refused: ${errMsg}`)
-    } finally {
-      setIsConfirmingReceipt(false)
-    }
+      setReceiptWarning(err instanceof Error ? err.message : String(err))
+    } finally { setIsConfirmingReceipt(false) }
   }
 
-  const applyPreset = (presetType: 'pph' | 'rta' | 'trauma') => {
-    if (presetType === 'pph') {
-      setBloodGroup('O+')
-      setComponent('RBC')
-      setUnits(2)
-      setUrgency('life_threatening')
-      setClinicalNote('Severe obstetric post-partum haemorrhage (PPH) in maternity theatre. Vitals unstable.')
-    } else if (presetType === 'rta') {
-      setBloodGroup('unknown')
-      setComponent('RBC')
-      setUnits(4)
-      setUrgency('life_threatening')
-      setClinicalNote('Pedestrian road traffic trauma, acute massive internal haemorrhage, uncrossmatched emergency.')
-    } else if (presetType === 'trauma') {
-      setBloodGroup('B+')
-      setComponent('FFP')
-      setUnits(2)
-      setUrgency('urgent')
-      setClinicalNote('Disseminated intravascular coagulation risk post-trauma.')
-    }
-  }
+  const presets = [
+    { label: 'PPH (2U O+)', group: 'O+', comp: 'RBC', units: 2, urgency: 'life_threatening', note: 'Severe obstetric post-partum haemorrhage in maternity theatre. Vitals unstable.' },
+    { label: 'Trauma uncrossmatched', group: 'unknown', comp: 'RBC', units: 4, urgency: 'life_threatening', note: 'Road traffic trauma, acute massive haemorrhage, uncrossmatched emergency.' },
+  ] as const
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-8">
-      {/* Clinician Header Info */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900 border border-slate-800 p-5 rounded-2xl">
-        <div>
-          <div className="flex items-center gap-2 text-rose-400 text-xs font-semibold uppercase tracking-wider">
-            <Droplets className="w-4 h-4" />
-            Ward Clinician Terminal
-          </div>
-          <h2 className="text-xl font-bold text-white mt-1">Raise Emergency Blood Request</h2>
-          <p className="text-sm text-slate-400 mt-0.5">
-            Requests trigger automated compatibility validation across all 47 regional facilities and reserve units instantly.
-          </p>
-        </div>
-
-        {/* Quick Presets */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-slate-500 font-medium mr-1 flex items-center gap-1">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            Emergency Presets:
-          </span>
-          <button
-            type="button"
-            onClick={() => applyPreset('pph')}
-            className="text-xs bg-slate-800 hover:bg-rose-950/60 hover:text-rose-300 hover:border-rose-700/60 text-slate-300 border border-slate-700 px-3 py-1.5 rounded-lg transition-all"
-          >
-            Maternity PPH (2U O+)
-          </button>
-          <button
-            type="button"
-            onClick={() => applyPreset('rta')}
-            className="text-xs bg-slate-800 hover:bg-rose-950/60 hover:text-rose-300 hover:border-rose-700/60 text-slate-300 border border-slate-700 px-3 py-1.5 rounded-lg transition-all"
-          >
-            Trauma Uncrossmatched (O-)
-          </button>
-        </div>
+    <div style={S.page}>
+      <div style={{ marginBottom: 28 }}>
+        <span style={S.label}>Ward Clinician · HSP-002</span>
+        <h2 style={S.h2}>Request Blood</h2>
+        <p style={{ ...S.muted, marginTop: 4 }}>Requests scan all 47 facilities, run compatibility checks, and auto-hold units at the top site.</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Form Column */}
-        <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {error && (
-              <div className="bg-rose-950/60 border border-rose-800 text-rose-200 text-xs p-3.5 rounded-xl flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <span>{error}</span>
-              </div>
-            )}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 24, alignItems: 'start' }}>
+        {/* Form */}
+        <div style={S.card}>
+          {/* Presets */}
+          <div style={{ marginBottom: 24 }}>
+            <span style={S.label}>Quick presets</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {presets.map(p => (
+                <button key={p.label} type="button" onClick={() => { setBloodGroup(p.group as BloodGroup); setComponent(p.comp as BloodComponent); setUnits(p.units); setUrgency(p.urgency as Urgency); setClinicalNote(p.note) }}
+                  style={{ padding: '7px 14px', fontSize: 12, border: '1px solid var(--rule)', borderRadius: 6, background: 'var(--surface-raised)', color: 'var(--ink)', cursor: 'pointer' }}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
-            {/* Blood Group & Component Selection */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <div style={S.rule} />
+
+          <form onSubmit={handleSubmit}>
+            {error && <div style={{ padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, fontSize: 13, color: '#B91C1C', marginBottom: 20 }}>{error}</div>}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+              {/* Blood Group */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                  Patient Blood Group
-                </label>
-                <select
-                  value={bloodGroup}
-                  onChange={(e) => setBloodGroup(e.target.value as BloodGroup)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white font-medium text-sm focus:outline-none focus:border-rose-500 transition-colors"
-                >
-                  <option value="O+">O+ (RhD Positive)</option>
-                  <option value="O-">O- (Universal Red Cell Donor - Rare)</option>
-                  <option value="A+">A+ (RhD Positive)</option>
-                  <option value="A-">A- (RhD Negative)</option>
-                  <option value="B+">B+ (RhD Positive)</option>
-                  <option value="B-">B- (RhD Negative)</option>
-                  <option value="AB+">AB+ (Universal Red Cell Recipient)</option>
-                  <option value="AB-">AB- (RhD Negative)</option>
-                  <option value="unknown">Unknown / Uncrossmatched</option>
+                <label style={S.fieldLabel}>Patient blood group</label>
+                <select value={bloodGroup} onChange={e => setBloodGroup(e.target.value as BloodGroup)} style={{ ...S.input }}>
+                  {['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'unknown'].map(g => (
+                    <option key={g} value={g}>{g === 'unknown' ? 'Unknown / Uncrossmatched' : g}</option>
+                  ))}
                 </select>
-
-                {bloodGroup === 'unknown' && (
-                  <p className="mt-2 text-xs text-amber-400/90 bg-amber-950/30 border border-amber-900/50 p-2.5 rounded-lg flex items-start gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-                    <span>Recommends O− universal donor red cells. O− stock is scarce; grouped units will be prioritized once grouped.</span>
-                  </p>
-                )}
+                {bloodGroup === 'unknown' && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--warn)' }}>⚠ Will recommend O− universal donor. O− stock is scarce.</div>}
               </div>
 
+              {/* Component */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                  Blood Component
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['RBC', 'FFP', 'PLT'] as BloodComponent[]).map((comp) => (
-                    <button
-                      key={comp}
-                      type="button"
-                      onClick={() => setComponent(comp)}
-                      className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all text-center ${
-                        component === comp
-                          ? 'bg-rose-600/20 border-rose-500 text-rose-300 shadow-sm'
-                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
-                      }`}
-                    >
-                      {comp === 'RBC' && 'Red Cells (RBC)'}
-                      {comp === 'FFP' && 'Plasma (FFP)'}
-                      {comp === 'PLT' && 'Platelets (PLT)'}
-                    </button>
+                <label style={S.fieldLabel}>Component</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+                  {(['RBC', 'FFP', 'PLT'] as BloodComponent[]).map(c => (
+                    <button key={c} type="button" onClick={() => setComponent(c)} style={{
+                      padding: '8px 4px', fontSize: 13, fontWeight: 500, borderRadius: 6, cursor: 'pointer',
+                      border: '1px solid', textAlign: 'center',
+                      background: component === c ? 'var(--ink)' : 'var(--surface-raised)',
+                      color: component === c ? '#fff' : 'var(--ink-muted)',
+                      borderColor: component === c ? 'var(--ink)' : 'var(--rule)',
+                    }}>{c}</button>
                   ))}
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1.5">
-                  {component === 'RBC' && '35–42 day shelf life · 2–6°C cold chain.'}
-                  {component === 'FFP' && 'Reversed compatibility table (AB gives to all).'}
-                  {component === 'PLT' && '5 day shelf life · 20–24°C continuous agitation.'}
-                </p>
+                <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 6 }}>
+                  {component === 'RBC' && '35–42 day shelf · 2–6°C'}
+                  {component === 'FFP' && 'Reversed ABO compat · frozen'}
+                  {component === 'PLT' && '5-day shelf · 20–24°C agitation'}
+                </div>
               </div>
             </div>
 
-            {/* Units & Urgency */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+              {/* Units */}
               <div>
-                <div className="flex justify-between items-center mb-2">
-                  <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
-                    Units Requested
-                  </label>
-                  <span className="text-sm font-bold text-rose-400">{units} unit(s)</span>
-                </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="8"
-                  value={units}
-                  onChange={(e) => setUnits(parseInt(e.target.value))}
-                  className="w-full accent-rose-500 bg-slate-950 h-2 rounded-lg cursor-pointer"
-                />
-                <div className="flex justify-between text-[11px] text-slate-500 mt-1">
-                  <span>1 Unit</span>
-                  <span>4 Units (Typical)</span>
-                  <span>8 Units (Max)</span>
+                <label style={S.fieldLabel}>Units — <strong style={{ color: 'var(--ink)', fontFamily: 'var(--mono)' }}>{units}</strong></label>
+                <input type="range" min={1} max={8} value={units} onChange={e => setUnits(parseInt(e.target.value))}
+                  style={{ width: '100%', accentColor: 'var(--accent)' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--ink-faint)', marginTop: 2 }}>
+                  <span>1</span><span>4</span><span>8</span>
                 </div>
               </div>
 
+              {/* Urgency */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                  Clinical Urgency
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['life_threatening', 'urgent', 'routine'] as Urgency[]).map((urg) => (
-                    <button
-                      key={urg}
-                      type="button"
-                      onClick={() => setUrgency(urg)}
-                      className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all text-center capitalize ${
-                        urgency === urg
-                          ? urg === 'life_threatening'
-                            ? 'bg-rose-600 text-white border-rose-500 shadow-md shadow-rose-900/30'
-                            : 'bg-amber-600 text-white border-amber-500 shadow-md shadow-amber-900/30'
-                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
-                      }`}
-                    >
-                      {urg.replace('_', ' ')}
-                    </button>
+                <label style={S.fieldLabel}>Urgency</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+                  {(['life_threatening', 'urgent', 'routine'] as Urgency[]).map(u => (
+                    <button key={u} type="button" onClick={() => setUrgency(u)} style={{
+                      padding: '8px 4px', fontSize: 11, fontWeight: 500, borderRadius: 6, cursor: 'pointer',
+                      border: '1px solid', textAlign: 'center' as const,
+                      background: urgency === u ? (u === 'life_threatening' ? 'var(--accent)' : u === 'urgent' ? 'var(--warn)' : 'var(--safe)') : 'var(--surface-raised)',
+                      color: urgency === u ? '#fff' : 'var(--ink-muted)',
+                      borderColor: urgency === u ? 'transparent' : 'var(--rule)',
+                    }}>{u === 'life_threatening' ? 'Critical' : u.charAt(0).toUpperCase() + u.slice(1)}</button>
                   ))}
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1.5">
-                  {urgency === 'life_threatening' && 'Target: <60m. Standing emergency authorisation route applies.'}
-                  {urgency === 'urgent' && 'Target: <180m. Requires MoH officer sign-off with 5m timer.'}
-                  {urgency === 'routine' && 'Scheduled elective or redistribution.'}
-                </p>
+                <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 6 }}>
+                  {urgency === 'life_threatening' && 'Target <60 min · standing MoH auth'}
+                  {urgency === 'urgent' && 'Target <180 min · MoH sign-off required'}
+                  {urgency === 'routine' && 'Scheduled / elective'}
+                </div>
               </div>
             </div>
 
-            {/* Clinical Note */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                Clinical Indication &amp; Theater Location (Optional)
-              </label>
-              <textarea
-                value={clinicalNote}
-                onChange={(e) => setClinicalNote(e.target.value)}
-                rows={2}
-                placeholder="e.g., Maternity Theatre 2, acute severe haemorrhage, vitals BP 70/40, HR 135"
-                maxLength={500}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-white text-sm focus:outline-none focus:border-rose-500 transition-colors"
-              />
-              <p className="text-[11px] text-slate-500 mt-1">
-                Strict privacy note (KDPA): Note is visible only to clinician and blood bank officer. Supplying lab sees only component and blood group.
-              </p>
+            {/* Clinical note */}
+            <div style={{ marginBottom: 24 }}>
+              <label style={S.fieldLabel}>Clinical note (optional)</label>
+              <textarea value={clinicalNote} onChange={e => setClinicalNote(e.target.value)} rows={2} maxLength={500}
+                placeholder="e.g. Theatre 2, acute PPH, BP 70/40, HR 135"
+                style={{ ...S.input, resize: 'vertical' }} />
+              <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 4 }}>
+                KDPA: Visible to officer only. Supplying lab sees component and blood group only.
+              </div>
             </div>
 
-            {/* Submit Button */}
-            <div className="pt-2">
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full bg-rose-600 hover:bg-rose-500 text-white font-semibold py-3 px-6 rounded-xl shadow-lg shadow-rose-900/40 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-              >
-                {isSubmitting ? (
-                  <>
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                    <span>Scanning 47 Facilities &amp; Running ML ETA Model...</span>
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" />
-                    <span>Dispatch Immediate Blood Request ({units}U {bloodGroup} {component})</span>
-                  </>
-                )}
-              </button>
-            </div>
+            <button type="submit" disabled={isSubmitting} style={{
+              width: '100%', padding: '12px', fontSize: 14, fontWeight: 600, borderRadius: 6, border: 'none',
+              background: isSubmitting ? '#E5E5E5' : 'var(--accent)', color: isSubmitting ? 'var(--ink-muted)' : '#fff',
+              cursor: isSubmitting ? 'not-allowed' : 'pointer',
+            }}>
+              {isSubmitting ? 'Scanning 47 facilities…' : `Request ${units}U ${bloodGroup} ${component}`}
+            </button>
           </form>
         </div>
 
-        {/* Right Info Card: Protocol & Immediate Feedback */}
-        <div className="space-y-6">
+        {/* Right column */}
+        <div>
           {latestRequest ? (
-            <div className="bg-slate-900 border border-rose-800/80 rounded-2xl p-5 shadow-xl space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs bg-rose-500/20 text-rose-300 border border-rose-500/30 px-2.5 py-1 rounded-full font-mono font-semibold">
-                  Request #{latestRequest.id}
-                </span>
-                <span className="text-xs text-slate-400">
-                  {new Date(latestRequest.created_at).toLocaleTimeString()}
-                </span>
-              </div>
-
-              <div>
-                <div className="text-xs text-slate-400">Current Status</div>
-                <div className="text-base font-bold text-emerald-400 flex items-center gap-1.5 mt-0.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <div style={S.card}>
+              <span style={S.label}>Latest request</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <span style={{ fontSize: 18, fontFamily: 'var(--mono)', fontWeight: 500 }}>#{latestRequest.id}</span>
+                <span style={{ fontSize: 12, ...statusColor(latestRequest.status), padding: '2px 8px', borderRadius: 3, fontFamily: 'var(--mono)' }}>
                   {latestRequest.status}
-                </div>
+                </span>
               </div>
-
-              <div className="text-xs space-y-1.5 text-slate-300 border-t border-slate-800 pt-3">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Component:</span>
-                  <span className="font-semibold">{latestRequest.component} ({latestRequest.units_requested} units)</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Patient Group:</span>
-                  <span className="font-semibold">{latestRequest.patient_blood_group}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Compatible Pick:</span>
-                  <span className="font-semibold text-rose-300">[{latestRequest.compatible_groups.join(', ')}]</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">ETA Engine:</span>
-                  <span className="font-semibold text-amber-300">
-                    {latestRequest.eta_method === 'model' ? 'Random Forest ML' : 'Route Table Fallback'}
-                  </span>
-                </div>
+              <div style={{ display: 'grid', gap: 10, fontSize: 13 }}>
+                {[
+                  ['Blood group', latestRequest.patient_blood_group],
+                  ['Component', `${latestRequest.component} ×${latestRequest.units_requested}`],
+                  ['Compatible', (latestRequest.compatible_groups || []).join(', ')],
+                  ['ETA engine', latestRequest.eta_method === 'model' ? 'ML model' : 'Route table'],
+                ].map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--ink-faint)' }}>{k}</span>
+                    <span style={{ fontWeight: 500, fontFamily: 'var(--mono)' }}>{v}</span>
+                  </div>
+                ))}
               </div>
-
               {latestRequest.warnings && latestRequest.warnings.length > 0 && (
-                <div className="bg-amber-950/40 border border-amber-900/60 p-3 rounded-xl text-xs text-amber-200">
+                <div style={{ marginTop: 14, padding: '10px 12px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6, fontSize: 12, color: '#B45309' }}>
                   {latestRequest.warnings[0]}
                 </div>
               )}
-
-              <div className="bg-slate-950 p-3 rounded-xl text-xs text-slate-400 border border-slate-800">
-                <span className="text-white font-medium">Automatic Unit Hold Active:</span> Units at the top-ranked facility are reserved. Handed off to Blood Bank Officer for review.
+              <div style={{ ...S.rule }} />
+              <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+                Units held at top-ranked facility. Handed off to Blood Bank Officer for decision.
               </div>
             </div>
           ) : (
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
-              <div className="flex items-center gap-2 text-rose-400 text-xs font-semibold uppercase tracking-wider">
-                <Clock className="w-4 h-4" />
-                The Golden Hour Standard
+            <div style={S.card}>
+              <span style={S.label}>How it works</span>
+              <div style={{ display: 'grid', gap: 12 }}>
+                {[
+                  ['ABO/RhD rules', 'Full compatibility matrix — antigen-verified, never AI.'],
+                  ['Safety filters', 'Excludes excursions, reactive screenings, expired units.'],
+                  ['ML ETA', '30.8 min emergency accuracy vs 41.5 min baseline (−25.8%).'],
+                  ['Human gate', 'Officer approves every dispatch. No autonomous release.'],
+                ].map(([title, desc]) => (
+                  <div key={title} style={{ fontSize: 13 }}>
+                    <div style={{ fontWeight: 600, color: 'var(--ink)', marginBottom: 2 }}>{title}</div>
+                    <div style={{ color: 'var(--ink-muted)' }}>{desc}</div>
+                  </div>
+                ))}
               </div>
-              <h3 className="text-sm font-semibold text-white">How Intelligent Dispatch Works</h3>
-              <ul className="text-xs text-slate-400 space-y-2.5">
-                <li className="flex items-start gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 shrink-0"></span>
-                  <span><strong>Biological compatibility:</strong> Fixed ABO/RhD matrix rules engine (antigen verified, never AI).</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 shrink-0"></span>
-                  <span><strong>Safety filters:</strong> Excludes temperature excursions, reactive screenings, and expired units.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 shrink-0"></span>
-                  <span><strong>Calibrated ML ETA:</strong> Predicts realistic transit time from 35,181 historical transfers with honest uncertainty bounds.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 shrink-0"></span>
-                  <span><strong>Human-in-the-loop:</strong> Blood bank officer must Accept, Change, or Reject every dispatch.</span>
-                </li>
-              </ul>
             </div>
           )}
         </div>
       </div>
 
-      {/* Requests History & Arrival Tracking Table */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-base font-bold text-white flex items-center gap-2">
-            <span>Hospital Blood Requests Queue</span>
-            <span className="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-mono">
-              {requestsList.length}
-            </span>
-          </h3>
-          <button
-            onClick={loadRequests}
-            className="text-xs text-slate-400 hover:text-slate-200 transition-colors"
-          >
-            Refresh
-          </button>
-        </div>
-
-        {requestsList.length === 0 ? (
-          <div className="text-center py-8 text-slate-500 text-xs">
-            No active emergency blood requests. Use the form above to submit an urgent dispatch.
+      {/* Requests table */}
+      {requestsList.length > 0 && (
+        <div style={{ ...S.card, marginTop: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <span style={{ fontWeight: 600, fontSize: 15 }}>Request Queue <span style={{ fontSize: 13, color: 'var(--ink-faint)', fontFamily: 'var(--mono)', fontWeight: 400 }}>({requestsList.length})</span></span>
+            <button onClick={loadRequests} style={{ fontSize: 12, color: 'var(--ink-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>Refresh</button>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-300">
-              <thead className="bg-slate-950/70 text-slate-400 uppercase font-semibold text-[11px] border-b border-slate-800">
-                <tr>
-                  <th className="py-3 px-4">Request ID</th>
-                  <th className="py-3 px-4">Urgency</th>
-                  <th className="py-3 px-4">Component &amp; Group</th>
-                  <th className="py-3 px-4">Units</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Created</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 font-medium">
-                {requestsList.map((req) => (
-                  <tr key={req.id} className="hover:bg-slate-800/30 transition-colors">
-                    <td className="py-3 px-4 font-mono font-bold text-white">#{req.id}</td>
-                    <td className="py-3 px-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] uppercase font-semibold ${
-                        req.urgency === 'life_threatening'
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      }`}>
-                        {req.urgency.replace('_', ' ')}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      {req.component} · <strong className="text-white">{req.patient_blood_group}</strong>
-                    </td>
-                    <td className="py-3 px-4">{req.units_requested} U</td>
-                    <td className="py-3 px-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                        req.status === 'Received'
-                          ? 'bg-emerald-500/20 text-emerald-300'
-                          : req.status === 'InTransit'
-                          ? 'bg-blue-500/20 text-blue-300 animate-pulse'
-                          : req.status === 'AwaitingDecision'
-                          ? 'bg-amber-500/20 text-amber-300'
-                          : 'bg-slate-800 text-slate-300'
-                      }`}>
-                        {req.status}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-slate-400">
-                      {new Date(req.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      {req.status === 'InTransit' ? (
-                        <button
-                          onClick={() => setReceiptModalReq(req)}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold px-3 py-1 rounded-lg transition-colors flex items-center gap-1 ml-auto"
-                        >
-                          <Thermometer className="w-3 h-3" />
-                          Confirm Arrival
-                        </button>
-                      ) : req.status === 'Received' ? (
-                        <span className="text-emerald-400 text-xs flex items-center gap-1 justify-end font-medium">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          Transfusion Ready
-                        </span>
-                      ) : (
-                        <span className="text-slate-500 text-xs">In Progress</span>
-                      )}
-                    </td>
-                  </tr>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--rule)' }}>
+                {['ID', 'Urgency', 'Component', 'Units', 'Status', 'Time', ''].map(h => (
+                  <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--ink-faint)', fontWeight: 400 }}>{h}</th>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+              </tr>
+            </thead>
+            <tbody>
+              {requestsList.map(req => (
+                <tr key={req.id} style={{ borderBottom: '1px solid var(--rule)' }}>
+                  <td style={{ padding: '10px 12px', fontFamily: 'var(--mono)', fontWeight: 500 }}>#{req.id}</td>
+                  <td style={{ padding: '10px 12px' }}>
+                    <span style={{ fontSize: 11, fontFamily: 'var(--mono)', padding: '2px 7px', borderRadius: 3, background: req.urgency === 'life_threatening' ? '#FEF2F2' : '#FFFBEB', color: req.urgency === 'life_threatening' ? '#B91C1C' : '#B45309', border: req.urgency === 'life_threatening' ? '1px solid #FECACA' : '1px solid #FDE68A' }}>
+                      {req.urgency === 'life_threatening' ? 'Critical' : req.urgency}
+                    </span>
+                  </td>
+                  <td style={{ padding: '10px 12px', fontFamily: 'var(--mono)' }}>{req.patient_blood_group} {req.component}</td>
+                  <td style={{ padding: '10px 12px' }}>{req.units_requested}U</td>
+                  <td style={{ padding: '10px 12px' }}>
+                    <span style={{ fontSize: 11, fontFamily: 'var(--mono)', padding: '2px 7px', borderRadius: 3, ...statusColor(req.status) }}>
+                      {req.status}
+                    </span>
+                  </td>
+                  <td style={{ padding: '10px 12px', color: 'var(--ink-faint)', fontFamily: 'var(--mono)' }}>
+                    {new Date(req.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </td>
+                  <td style={{ padding: '10px 12px' }}>
+                    {req.status === 'InTransit' && (
+                      <button onClick={() => setReceiptModalReq(req)} style={{ fontSize: 12, padding: '5px 12px', borderRadius: 5, border: 'none', background: 'var(--safe)', color: '#fff', cursor: 'pointer' }}>
+                        Confirm Arrival
+                      </button>
+                    )}
+                    {req.status === 'Received' && <span style={{ fontSize: 12, color: 'var(--safe)' }}>✓ Received</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      {/* Arrival / Cool Box Temperature Confirmation Modal */}
+      {/* Arrival modal */}
       {receiptModalReq && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-5">
-            <div className="flex items-center gap-2.5 text-emerald-400">
-              <Thermometer className="w-6 h-6" />
-              <h3 className="text-lg font-bold text-white">Confirm Blood Arrival &amp; Cold Chain</h3>
-            </div>
-            <p className="text-xs text-slate-300">
-              Request #{receiptModalReq.id}: Confirm physical receipt of {receiptModalReq.units_requested} unit(s) of {receiptModalReq.component} ({receiptModalReq.patient_blood_group}).
-            </p>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                Cool Box Max Temperature (°C)
-              </label>
-              <input
-                type="number"
-                step="0.1"
-                value={coolboxTemp}
-                onChange={(e) => setCoolboxTemp(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white font-mono text-base focus:outline-none focus:border-rose-500"
-              />
-              <p className="text-[11px] text-slate-400 mt-1.5">
-                Standard safe range: 2.0°C – 6.0°C (cool box breach limit: &gt;10.0°C).
-              </p>
-            </div>
-
-            {receiptWarning && (
-              <div className="bg-rose-950/60 border border-rose-800 p-3 rounded-xl text-xs text-rose-200">
-                {receiptWarning}
-              </div>
-            )}
-
-            <div className="flex gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setReceiptModalReq(null)}
-                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 py-2.5 rounded-xl text-xs font-semibold transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isConfirmingReceipt}
-                onClick={() => handleConfirmArrival(receiptModalReq)}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
-              >
-                {isConfirmingReceipt ? 'Logging...' : 'Confirm Receipt'}
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ background: 'var(--surface)', borderRadius: 10, padding: 32, maxWidth: 440, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Confirm Blood Arrival</h3>
+            <p style={{ ...S.muted, marginBottom: 20 }}>Request #{receiptModalReq.id}: {receiptModalReq.units_requested}U {receiptModalReq.component} ({receiptModalReq.patient_blood_group})</p>
+            <label style={S.fieldLabel}>Cool box temperature (°C)</label>
+            <input type="number" step="0.1" value={coolboxTemp} onChange={e => setCoolboxTemp(e.target.value)}
+              style={{ ...S.input, fontFamily: 'var(--mono)', fontSize: 18, marginBottom: 6 }} />
+            <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginBottom: 20 }}>Safe range: 2.0–6.0°C. Alert triggers above 10.0°C.</div>
+            {receiptWarning && <div style={{ padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, fontSize: 13, color: '#B91C1C', marginBottom: 16 }}>{receiptWarning}</div>}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setReceiptModalReq(null)} style={{ flex: 1, padding: '10px', fontSize: 13, border: '1px solid var(--rule)', borderRadius: 6, background: 'var(--surface-raised)', cursor: 'pointer', color: 'var(--ink)' }}>Cancel</button>
+              <button disabled={isConfirmingReceipt} onClick={() => handleConfirmArrival(receiptModalReq)} style={{ flex: 1, padding: '10px', fontSize: 13, fontWeight: 600, border: 'none', borderRadius: 6, background: 'var(--safe)', color: '#fff', cursor: 'pointer' }}>
+                {isConfirmingReceipt ? 'Logging…' : 'Confirm Receipt'}
               </button>
             </div>
           </div>

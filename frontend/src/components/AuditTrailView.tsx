@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import type { AuditEvent } from '../types'
 import { api } from '../api/client'
-import { ShieldCheck, FileText, UserCheck } from 'lucide-react'
 
 export const AuditTrailView: React.FC = () => {
   const [requestId, setRequestId] = useState<number>(1042)
@@ -80,85 +79,282 @@ export const AuditTrailView: React.FC = () => {
     }
   }
 
+  const actionColor = (action: string): string => {
+    if (action.includes('raised') || action.includes('request')) return 'var(--info)'
+    if (action.includes('accepted') || action.includes('released') || action.includes('received')) return 'var(--safe)'
+    if (action.includes('rejected') || action.includes('stop') || action.includes('breach')) return 'var(--accent)'
+    if (action.includes('held') || action.includes('completed') || action.includes('changed')) return 'var(--warn)'
+    return 'var(--muted)'
+  }
+
+  const S = {
+    page: {
+      maxWidth: '900px',
+      margin: '0 auto',
+      padding: '32px 24px',
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '24px',
+    },
+    pageHeader: {
+      borderBottom: '1px solid var(--rule)',
+      paddingBottom: '20px',
+      display: 'flex',
+      alignItems: 'flex-end' as const,
+      justifyContent: 'space-between' as const,
+      gap: '16px',
+      flexWrap: 'wrap' as const,
+    },
+    headerLeft: {
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '4px',
+    },
+    eyebrow: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      fontWeight: 600,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase' as const,
+      color: 'var(--muted)',
+    },
+    h2: {
+      fontSize: '20px',
+      fontWeight: 700,
+      color: 'var(--ink)',
+      margin: 0,
+    },
+    subtitle: {
+      fontSize: '13px',
+      color: 'var(--muted)',
+      marginTop: '2px',
+    },
+    requestIdRow: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+    },
+    requestLabel: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      fontWeight: 600,
+      color: 'var(--muted)',
+      textTransform: 'uppercase' as const,
+      letterSpacing: '0.06em',
+      whiteSpace: 'nowrap' as const,
+    },
+    requestInput: {
+      width: '90px',
+      border: '1px solid var(--rule)',
+      borderRadius: '2px',
+      padding: '6px 10px',
+      fontSize: '14px',
+      fontFamily: "'IBM Plex Mono', monospace",
+      color: 'var(--ink)',
+      background: '#fff',
+      outline: 'none',
+    },
+    card: {
+      background: 'var(--surface-raised)',
+      border: '1px solid var(--rule)',
+      borderRadius: '4px',
+      padding: '24px',
+    },
+    cardTitle: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      fontWeight: 700,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase' as const,
+      color: 'var(--muted)',
+      marginBottom: '20px',
+      display: 'flex',
+      justifyContent: 'space-between' as const,
+      alignItems: 'center' as const,
+    },
+    loadingText: {
+      textAlign: 'center' as const,
+      padding: '32px',
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '12px',
+      color: 'var(--faint)',
+    },
+    timeline: {
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '0',
+      position: 'relative' as const,
+    },
+    timelineItem: {
+      display: 'flex',
+      gap: '16px',
+      paddingBottom: '24px',
+      position: 'relative' as const,
+    },
+    timelineLeft: {
+      display: 'flex',
+      flexDirection: 'column' as const,
+      alignItems: 'center' as const,
+      flexShrink: 0,
+      width: '20px',
+    },
+    dot: (color: string) => ({
+      width: '10px',
+      height: '10px',
+      borderRadius: '50%',
+      background: color,
+      flexShrink: 0,
+      marginTop: '4px',
+      zIndex: 1,
+      position: 'relative' as const,
+    }),
+    line: {
+      width: '1px',
+      flex: 1,
+      background: 'var(--rule)',
+      marginTop: '4px',
+    },
+    eventCard: {
+      flex: 1,
+      border: '1px solid var(--rule)',
+      borderRadius: '4px',
+      padding: '14px 16px',
+      background: '#fff',
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '8px',
+    },
+    eventTop: {
+      display: 'flex',
+      justifyContent: 'space-between' as const,
+      alignItems: 'flex-start' as const,
+      gap: '8px',
+      flexWrap: 'wrap' as const,
+    },
+    actionTag: (color: string) => ({
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      fontWeight: 700,
+      color: color,
+      background: `${color}15`,
+      border: `1px solid ${color}40`,
+      padding: '2px 8px',
+      borderRadius: '2px',
+    }),
+    objectTag: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      color: 'var(--faint)',
+    },
+    timestamp: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      color: 'var(--faint)',
+      whiteSpace: 'nowrap' as const,
+    },
+    actorRow: {
+      fontSize: '12px',
+      color: 'var(--muted)',
+    },
+    actorName: {
+      fontWeight: 700,
+      color: 'var(--ink)',
+    },
+    reasonBox: {
+      fontSize: '12px',
+      color: 'var(--ink)',
+      background: 'var(--surface-raised)',
+      borderLeft: '2px solid var(--rule)',
+      padding: '6px 10px',
+      lineHeight: 1.5,
+    },
+    stateBox: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      color: 'var(--faint)',
+      background: 'var(--surface-raised)',
+      padding: '5px 8px',
+      borderRadius: '2px',
+      overflow: 'hidden' as const,
+      textOverflow: 'ellipsis' as const,
+      whiteSpace: 'nowrap' as const,
+    },
+  }
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-      {/* Audit Header */}
-      <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 text-rose-400 text-xs font-semibold uppercase tracking-wider">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            Append-Only Audit Log (KDPA §31 &amp; §46)
-          </div>
-          <h2 className="text-xl font-bold text-white mt-1">Immutable Transfusion &amp; Dispatch Audit Trail</h2>
-          <p className="text-sm text-slate-400 mt-0.5">
-            Every login, automated stock match, unit hold, officer override, and cold chain temperature inspection is permanently signed.
+    <div style={S.page}>
+      {/* Header */}
+      <div style={S.pageHeader}>
+        <div style={S.headerLeft}>
+          <span style={S.eyebrow}>Append-Only · KDPA §31 & §46</span>
+          <h2 style={S.h2}>Transfusion & Dispatch Audit Trail</h2>
+          <p style={S.subtitle}>
+            Every login, stock match, unit hold, officer decision, and cold chain check is permanently logged.
           </p>
         </div>
-
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-400 font-medium">Inspect Request #:</label>
+        <div style={S.requestIdRow}>
+          <span style={S.requestLabel}>Inspect Request #</span>
           <input
             type="number"
             value={requestId}
             onChange={(e) => setRequestId(parseInt(e.target.value) || 0)}
-            className="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-rose-500"
+            style={S.requestInput}
           />
         </div>
       </div>
 
-      {/* Timeline View */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-6 flex items-center gap-2">
-          <FileText className="w-4 h-4 text-slate-400" />
-          <span>Chronological Audit Events (Oldest First)</span>
-        </h3>
+      {/* Timeline */}
+      <div style={S.card}>
+        <div style={S.cardTitle}>
+          <span>Chronological Events — Oldest First</span>
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px', color: 'var(--faint)' }}>
+            {events.length} event{events.length !== 1 ? 's' : ''}
+          </span>
+        </div>
 
         {isLoading ? (
-          <div className="text-center py-8 text-slate-400 text-xs">Loading audit log...</div>
+          <div style={S.loadingText}>Loading audit log…</div>
         ) : (
-          <div className="relative border-l-2 border-slate-800 ml-4 space-y-6">
-            {events.map((evt, idx) => (
-              <div key={idx} className="relative pl-6">
-                {/* Timeline Node Icon */}
-                <div className="absolute -left-2.5 top-0.5 w-5 h-5 rounded-full bg-slate-950 border-2 border-rose-500 flex items-center justify-center">
-                  <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
-                </div>
-
-                <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-bold text-rose-300 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
-                        {evt.action}
+          <div style={S.timeline}>
+            {events.map((evt, idx) => {
+              const color = actionColor(evt.action)
+              const isLast = idx === events.length - 1
+              return (
+                <div key={idx} style={S.timelineItem}>
+                  <div style={S.timelineLeft}>
+                    <div style={S.dot(color)} />
+                    {!isLast && <div style={S.line} />}
+                  </div>
+                  <div style={S.eventCard}>
+                    <div style={S.eventTop}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={S.actionTag(color)}>{evt.action}</span>
+                        <span style={S.objectTag}>{evt.object}</span>
+                      </div>
+                      <span style={S.timestamp}>
+                        {new Date(evt.time).toLocaleTimeString()} · {new Date(evt.time).toLocaleDateString()}
                       </span>
-                      <span className="font-mono text-slate-400">{evt.object}</span>
                     </div>
-                    <span className="text-[11px] text-slate-500 font-mono">
-                      {new Date(evt.time).toLocaleTimeString()} · {new Date(evt.time).toLocaleDateString()}
-                    </span>
+
+                    <div style={S.actorRow}>
+                      Actor: <span style={S.actorName}>{evt.actor}</span>
+                      {' · '}
+                      <span style={{ textTransform: 'capitalize' }}>{evt.role.replace(/_/g, ' ')}</span>
+                    </div>
+
+                    {evt.reason && (
+                      <div style={S.reasonBox}>{evt.reason}</div>
+                    )}
+
+                    {evt.after && (
+                      <div style={S.stateBox}>
+                        → {JSON.stringify(evt.after)}
+                      </div>
+                    )}
                   </div>
-
-                  <div className="flex items-center gap-2 text-xs text-slate-300">
-                    <UserCheck className="w-3.5 h-3.5 text-slate-400" />
-                    <span>Actor: <strong className="text-white">{evt.actor}</strong></span>
-                    <span className="text-slate-600">|</span>
-                    <span className="text-slate-400">Role: <span className="capitalize">{evt.role.replace(/_/g, ' ')}</span></span>
-                  </div>
-
-                  {evt.reason && (
-                    <div className="text-xs text-slate-300 bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">
-                      <span className="text-slate-400 font-semibold">Clinical / Operational Justification: </span>
-                      {evt.reason}
-                    </div>
-                  )}
-
-                  {evt.after && (
-                    <div className="text-[11px] font-mono text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800/40 truncate">
-                      State: {JSON.stringify(evt.after)}
-                    </div>
-                  )}
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>

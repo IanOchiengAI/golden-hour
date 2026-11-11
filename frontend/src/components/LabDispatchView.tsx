@@ -2,7 +2,6 @@ import React, { useState } from 'react'
 import type { Dispatch } from '../types'
 import { api } from '../api/client'
 import { useAuth } from '../context/AuthContext'
-import { Truck, CheckCircle2, XCircle, ShieldCheck, Lock, Navigation } from 'lucide-react'
 
 export const LabDispatchView: React.FC = () => {
   const { user, loginWithFacility } = useAuth()
@@ -55,7 +54,6 @@ export const LabDispatchView: React.FC = () => {
   const [modalDeclineId, setModalDeclineId] = useState<number | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null)
-
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   const handleConfirmRelease = async (dispatchId: number) => {
@@ -64,7 +62,7 @@ export const LabDispatchView: React.FC = () => {
     setErrorMsg(null)
     try {
       await api.releaseDispatch(dispatchId, 'confirm', transportMode)
-      setFeedbackMsg(`Dispatch #${dispatchId} confirmed! Transport mode '${transportMode.toUpperCase()}' dispatched.`)
+      setFeedbackMsg(`Dispatch #${dispatchId} confirmed. Transport: ${transportMode.toUpperCase()}.`)
       setDispatches((prev) =>
         prev.map((d) => (d.id === dispatchId ? { ...d, status: 'Released', transport_mode: transportMode } : d))
       )
@@ -82,7 +80,7 @@ export const LabDispatchView: React.FC = () => {
     setErrorMsg(null)
     try {
       await api.updateDispatchStatus(dispatchId, 'in_transit')
-      setFeedbackMsg(`Dispatch #${dispatchId} is now IN TRANSIT with live temperature tracking.`)
+      setFeedbackMsg(`Dispatch #${dispatchId} is now IN TRANSIT.`)
       setDispatches((prev) => (prev.map((d) => (d.id === dispatchId ? { ...d, status: 'InTransit' } : d))))
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -99,7 +97,7 @@ export const LabDispatchView: React.FC = () => {
     setErrorMsg(null)
     try {
       await api.releaseDispatch(dispatchId, 'decline', undefined, declineReason)
-      setFeedbackMsg(`Dispatch #${dispatchId} declined. Unit hold released; next-ranked facility auto-alerted.`)
+      setFeedbackMsg(`Dispatch #${dispatchId} declined. Hold released; next-ranked facility alerted.`)
       setDispatches((prev) => prev.filter((d) => d.id !== dispatchId))
       setModalDeclineId(null)
       setDeclineReason('')
@@ -111,237 +109,547 @@ export const LabDispatchView: React.FC = () => {
     }
   }
 
+  const statusColor = (status: string): React.CSSProperties => {
+    if (status === 'InTransit') return { color: 'var(--info)', background: '#EFF6FF', border: '1px solid #BFDBFE' }
+    if (status === 'Released') return { color: 'var(--safe)', background: '#F0FDF4', border: '1px solid #BBF7D0' }
+    if (status === 'AwaitingRelease') return { color: 'var(--warn)', background: '#FFFBEB', border: '1px solid #FDE68A' }
+    return { color: 'var(--muted)', background: 'var(--surface-raised)', border: '1px solid var(--rule)' }
+  }
+
+  const S = {
+    page: {
+      maxWidth: '900px',
+      margin: '0 auto',
+      padding: '32px 24px',
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '24px',
+    },
+    pageHeader: {
+      borderBottom: '1px solid var(--rule)',
+      paddingBottom: '20px',
+      display: 'flex',
+      alignItems: 'flex-end' as const,
+      justifyContent: 'space-between' as const,
+      gap: '16px',
+      flexWrap: 'wrap' as const,
+    },
+    headerLeft: {
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '4px',
+    },
+    eyebrow: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      fontWeight: 600,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase' as const,
+      color: 'var(--muted)',
+    },
+    h2: {
+      fontSize: '20px',
+      fontWeight: 700,
+      color: 'var(--ink)',
+      margin: 0,
+    },
+    subtitle: {
+      fontSize: '13px',
+      color: 'var(--muted)',
+      marginTop: '2px',
+    },
+    stationRow: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+    },
+    stationLabel: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      fontWeight: 600,
+      color: 'var(--muted)',
+      textTransform: 'uppercase' as const,
+      letterSpacing: '0.06em',
+      whiteSpace: 'nowrap' as const,
+    },
+    stationSelect: {
+      border: '1px solid var(--rule)',
+      borderRadius: '2px',
+      padding: '6px 10px',
+      fontSize: '12px',
+      fontFamily: "'IBM Plex Mono', monospace",
+      color: 'var(--ink)',
+      background: '#fff',
+      outline: 'none',
+      cursor: 'pointer',
+    },
+    kdpaBadge: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      padding: '6px 12px',
+      border: '1px solid var(--rule)',
+      borderRadius: '4px',
+      background: 'var(--surface-raised)',
+    },
+    kdpaText: {
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '1px',
+    },
+    kdpaTitle: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '10px',
+      fontWeight: 700,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase' as const,
+      color: 'var(--safe)',
+    },
+    kdpaSubtitle: {
+      fontSize: '11px',
+      color: 'var(--muted)',
+    },
+    notice: (type: 'success' | 'error') => ({
+      padding: '12px 16px',
+      borderLeft: `3px solid ${type === 'success' ? 'var(--safe)' : 'var(--accent)'}`,
+      background: type === 'success' ? '#F0FDF4' : '#FFF5F5',
+      color: type === 'success' ? 'var(--safe)' : 'var(--accent)',
+      fontSize: '13px',
+      borderRadius: '2px',
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    }),
+    noticeDismiss: {
+      background: 'none',
+      border: 'none',
+      cursor: 'pointer',
+      fontSize: '16px',
+      color: 'inherit',
+      opacity: 0.6,
+    },
+    sectionTitle: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      fontWeight: 700,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase' as const,
+      color: 'var(--muted)',
+      marginBottom: '12px',
+    },
+    emptyState: {
+      border: '1px solid var(--rule)',
+      borderRadius: '4px',
+      padding: '48px',
+      textAlign: 'center' as const,
+      color: 'var(--faint)',
+      fontSize: '13px',
+    },
+    dispatchCard: {
+      border: '1px solid var(--rule)',
+      borderRadius: '4px',
+      background: '#fff',
+      marginBottom: '16px',
+      overflow: 'hidden' as const,
+    },
+    cardTop: {
+      display: 'flex',
+      justifyContent: 'space-between' as const,
+      alignItems: 'center' as const,
+      padding: '14px 20px',
+      borderBottom: '1px solid var(--rule)',
+      background: 'var(--surface-raised)',
+    },
+    dispatchId: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '13px',
+      fontWeight: 700,
+      color: 'var(--ink)',
+    },
+    requestRef: {
+      fontSize: '12px',
+      color: 'var(--muted)',
+      marginLeft: '12px',
+    },
+    statusBadge: (status: string) => ({
+      ...statusColor(status),
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      fontWeight: 700,
+      padding: '3px 8px',
+      borderRadius: '2px',
+    }),
+    urgencyBadge: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      fontWeight: 700,
+      color: 'var(--accent)',
+      background: '#FFF5F5',
+      border: '1px solid #FCA5A5',
+      padding: '3px 8px',
+      borderRadius: '2px',
+      marginRight: '8px',
+    },
+    cardBody: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr 1fr',
+      gap: '0',
+    },
+    infoCell: {
+      padding: '16px 20px',
+      borderRight: '1px solid var(--rule)',
+    },
+    infoCellLast: {
+      padding: '16px 20px',
+    },
+    cellLabel: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '10px',
+      fontWeight: 600,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase' as const,
+      color: 'var(--faint)',
+      marginBottom: '8px',
+    },
+    cellField: {
+      marginBottom: '8px',
+    },
+    fieldLabel: {
+      fontSize: '11px',
+      color: 'var(--muted)',
+      display: 'block',
+      marginBottom: '1px',
+    },
+    fieldValue: {
+      fontSize: '13px',
+      fontWeight: 600,
+      color: 'var(--ink)',
+    },
+    componentBadge: {
+      fontSize: '13px',
+      fontWeight: 700,
+      color: 'var(--accent)',
+    },
+    unitId: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      color: 'var(--ink)',
+      background: 'var(--surface-raised)',
+      border: '1px solid var(--rule)',
+      padding: '3px 7px',
+      borderRadius: '2px',
+      display: 'block',
+      marginBottom: '4px',
+    },
+    cardFoot: {
+      display: 'flex',
+      justifyContent: 'space-between' as const,
+      alignItems: 'center' as const,
+      padding: '14px 20px',
+      borderTop: '1px solid var(--rule)',
+      gap: '16px',
+      flexWrap: 'wrap' as const,
+    },
+    transportRow: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+    },
+    transportLabel: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      fontWeight: 600,
+      color: 'var(--muted)',
+      textTransform: 'uppercase' as const,
+      letterSpacing: '0.06em',
+    },
+    transportSelect: {
+      border: '1px solid var(--rule)',
+      borderRadius: '2px',
+      padding: '6px 10px',
+      fontSize: '12px',
+      color: 'var(--ink)',
+      background: '#fff',
+      outline: 'none',
+      cursor: 'pointer',
+    },
+    actionRow: {
+      display: 'flex',
+      gap: '10px',
+      alignItems: 'center',
+    },
+    inTransitStatus: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '12px',
+      fontWeight: 700,
+      color: 'var(--info)',
+    },
+    // Modal
+    overlay: {
+      position: 'fixed' as const,
+      inset: 0,
+      background: 'rgba(17,17,17,0.5)',
+      zIndex: 50,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '24px',
+    },
+    modal: {
+      background: '#fff',
+      border: '1px solid var(--rule)',
+      borderRadius: '4px',
+      maxWidth: '460px',
+      width: '100%',
+      padding: '28px',
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '16px',
+    },
+    modalTitle: {
+      fontSize: '16px',
+      fontWeight: 700,
+      color: 'var(--ink)',
+    },
+    modalBody: {
+      fontSize: '13px',
+      color: 'var(--muted)',
+      lineHeight: 1.5,
+    },
+    textareaLabel: {
+      fontFamily: "'IBM Plex Mono', monospace",
+      fontSize: '11px',
+      fontWeight: 600,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase' as const,
+      color: 'var(--muted)',
+      display: 'block',
+      marginBottom: '6px',
+    },
+    textarea: {
+      width: '100%',
+      border: '1px solid var(--rule)',
+      borderRadius: '2px',
+      padding: '8px 12px',
+      fontSize: '13px',
+      color: 'var(--ink)',
+      background: '#fff',
+      resize: 'vertical' as const,
+      minHeight: '72px',
+      boxSizing: 'border-box' as const,
+      outline: 'none',
+      fontFamily: 'inherit',
+    },
+    modalButtons: {
+      display: 'flex',
+      gap: '12px',
+      justifyContent: 'flex-end' as const,
+    },
+  }
+
+  const btn = (variant: 'primary' | 'danger' | 'secondary' | 'outline-danger'): React.CSSProperties => ({
+    border: 'none',
+    borderRadius: '2px',
+    padding: '9px 16px',
+    fontSize: '12px',
+    fontWeight: 700,
+    cursor: isSubmitting ? 'not-allowed' : 'pointer',
+    opacity: isSubmitting ? 0.6 : 1,
+    fontFamily: "'IBM Plex Mono', monospace",
+    letterSpacing: '0.03em',
+    ...(variant === 'primary' ? { background: 'var(--safe)', color: '#fff' } : {}),
+    ...(variant === 'danger' ? { background: 'var(--accent)', color: '#fff' } : {}),
+    ...(variant === 'secondary' ? { background: 'var(--surface-raised)', color: 'var(--muted)', border: '1px solid var(--rule)' } : {}),
+    ...(variant === 'outline-danger' ? { background: '#FFF5F5', color: 'var(--accent)', border: '1px solid #FCA5A5' } : {}),
+  })
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-      {/* Supplying Lab Header */}
-      <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold uppercase tracking-wider">
-            <Truck className="w-4 h-4" />
-            Supplying Blood Bank &amp; Transfusion Lab Station
+    <div style={S.page}>
+      {/* Header */}
+      <div style={S.pageHeader}>
+        <div style={S.headerLeft}>
+          <span style={S.eyebrow}>Supplying Blood Bank · Order Fulfillment</span>
+          <h2 style={S.h2}>Cold Chain Dispatch</h2>
+          <p style={S.subtitle}>Physical packaging, ISBT-128 barcode verification, and courier handoff.</p>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'flex-end' }}>
+          <div style={S.stationRow}>
+            <span style={S.stationLabel}>Station</span>
+            <select
+              value={selectedStation}
+              onChange={(e) => handleStationSwitch(e.target.value)}
+              style={S.stationSelect}
+            >
+              {stations.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.id} — {s.name}
+                </option>
+              ))}
+            </select>
           </div>
-          <h2 className="text-xl font-bold text-white mt-1">Order Fulfillment &amp; Cold Chain Dispatch</h2>
-          <p className="text-sm text-slate-400 mt-0.5">
-            Physical packaging, barcode verification (ISBT-128), and courier handoff.
-          </p>
-        </div>
-
-        {/* Supplying Station Selector */}
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-400 font-medium">Logged in station:</label>
-          <select
-            value={selectedStation}
-            onChange={(e) => handleStationSwitch(e.target.value)}
-            className="bg-slate-950 border border-slate-800 text-white rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-emerald-500"
-          >
-            {stations.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.id} — {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* KDPA Supplier-Safe Privacy Badge */}
-        <div className="bg-slate-950 border border-slate-800 px-3.5 py-2 rounded-xl text-xs flex items-center gap-2 text-slate-300">
-          <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          <div>
-            <div className="text-[10px] text-emerald-400 uppercase font-semibold">KDPA Privacy Compliant</div>
-            <div className="text-[11px] text-slate-400">Supplier-Safe View: Patient details masked</div>
+          <div style={S.kdpaBadge}>
+            <div style={S.kdpaText}>
+              <span style={S.kdpaTitle}>✓ KDPA Compliant</span>
+              <span style={S.kdpaSubtitle}>Supplier-safe view · patient details masked</span>
+            </div>
           </div>
         </div>
       </div>
 
+      {/* Feedback */}
       {feedbackMsg && (
-        <div className="bg-emerald-950/60 border border-emerald-800 text-emerald-200 text-xs p-3.5 rounded-xl flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            <span>{feedbackMsg}</span>
-          </div>
-          <button onClick={() => setFeedbackMsg(null)} className="text-emerald-400 hover:text-white">
-            &times;
-          </button>
+        <div style={S.notice('success')}>
+          <span>{feedbackMsg}</span>
+          <button onClick={() => setFeedbackMsg(null)} style={S.noticeDismiss}>×</button>
         </div>
       )}
-
       {errorMsg && (
-        <div className="bg-rose-950/60 border border-rose-800 text-rose-200 text-xs p-3.5 rounded-xl flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <XCircle className="w-4 h-4 text-rose-400" />
-            <span>{errorMsg}</span>
-          </div>
-          <button onClick={() => setErrorMsg(null)} className="text-rose-400 hover:text-white">
-            &times;
-          </button>
+        <div style={S.notice('error')}>
+          <span>{errorMsg}</span>
+          <button onClick={() => setErrorMsg(null)} style={S.noticeDismiss}>×</button>
         </div>
       )}
 
-      {/* Dispatches List */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-bold text-white uppercase tracking-wider">Pending Blood Unit Releases</h3>
+      {/* Dispatches */}
+      <div>
+        <div style={S.sectionTitle}>Pending Blood Unit Releases</div>
 
         {dispatches.length === 0 ? (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400 text-xs">
-            No active dispatch orders waiting for release at this station.
+          <div style={S.emptyState}>
+            No active dispatch orders awaiting release at this station.
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-5">
-            {dispatches.map((d) => (
-              <div
-                key={d.id}
-                className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5"
-              >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-4">
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-sm font-bold bg-slate-800 text-white px-2.5 py-1 rounded-lg">
-                      Dispatch #{d.id}
-                    </span>
-                    <span className="text-xs text-slate-400">For Emergency Request #{d.request_id}</span>
+          dispatches.map((d) => (
+            <div key={d.id} style={S.dispatchCard}>
+              {/* Card top bar */}
+              <div style={S.cardTop}>
+                <div>
+                  <span style={S.dispatchId}>Dispatch #{d.id}</span>
+                  <span style={S.requestRef}>For Emergency Request #{d.request_id}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={S.urgencyBadge}>{d.urgency.replace('_', ' ').toUpperCase()}</span>
+                  <span style={S.statusBadge(d.status)}>{d.status}</span>
+                </div>
+              </div>
+
+              {/* Three info columns */}
+              <div style={S.cardBody}>
+                <div style={S.infoCell}>
+                  <div style={S.cellLabel}>Route Logistics</div>
+                  <div style={S.cellField}>
+                    <span style={S.fieldLabel}>From (Your Lab)</span>
+                    <span style={S.fieldValue}>{d.from_facility_name || d.from_facility_id}</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] bg-rose-500/20 text-rose-300 border border-rose-500/30 px-2 py-0.5 rounded-full font-semibold uppercase">
-                      {d.urgency.replace('_', ' ')}
-                    </span>
-                    <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-800 text-emerald-400">
-                      {d.status}
-                    </span>
+                  <div style={S.cellField}>
+                    <span style={S.fieldLabel}>Destination</span>
+                    <span style={S.fieldValue}>{d.to_facility_name || d.to_facility_id}</span>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5 text-xs">
-                  {/* Origin & Destination */}
-                  <div className="space-y-2 bg-slate-950 p-3.5 rounded-xl border border-slate-800/80">
-                    <div className="text-slate-500 uppercase font-semibold text-[10px]">Route Logistics</div>
-                    <div>
-                      <span className="text-slate-400">From (Your Lab):</span>
-                      <div className="font-semibold text-white">{d.from_facility_name || d.from_facility_id}</div>
-                    </div>
-                    <div>
-                      <span className="text-slate-400">Destination:</span>
-                      <div className="font-semibold text-white">{d.to_facility_name || d.to_facility_id}</div>
-                    </div>
+                <div style={S.infoCell}>
+                  <div style={S.cellLabel}>Blood Units Required</div>
+                  <div style={S.cellField}>
+                    <span style={S.fieldLabel}>Component</span>
+                    <span style={S.componentBadge}>{d.component} ({d.units_requested} unit{d.units_requested !== 1 ? 's' : ''})</span>
                   </div>
-
-                  {/* Units to Package */}
-                  <div className="space-y-2 bg-slate-950 p-3.5 rounded-xl border border-slate-800/80">
-                    <div className="text-slate-500 uppercase font-semibold text-[10px]">Blood Units Required</div>
-                    <div>
-                      <span className="text-slate-400">Component:</span>
-                      <div className="font-semibold text-rose-400">{d.component} ({d.units_requested} unit(s))</div>
-                    </div>
-                    <div>
-                      <span className="text-slate-400">Unit Blood Groups:</span>
-                      <div className="font-semibold text-white">{d.blood_groups.join(', ')}</div>
-                    </div>
-                  </div>
-
-                  {/* Barcodes to Scan */}
-                  <div className="space-y-2 bg-slate-950 p-3.5 rounded-xl border border-slate-800/80">
-                    <div className="text-slate-500 uppercase font-semibold text-[10px]">ISBT-128 Barcodes to Retrieve</div>
-                    <div className="space-y-1">
-                      {d.unit_ids.map((uid) => (
-                        <div key={uid} className="font-mono text-[11px] bg-slate-900 px-2 py-1 rounded text-amber-300 border border-slate-800 flex items-center justify-between">
-                          <span>{uid}</span>
-                          <Lock className="w-3 h-3 text-slate-500" />
-                        </div>
-                      ))}
-                    </div>
+                  <div style={S.cellField}>
+                    <span style={S.fieldLabel}>Blood Groups</span>
+                    <span style={S.fieldValue}>{d.blood_groups.join(', ')}</span>
                   </div>
                 </div>
 
-                {/* Transport Modality & Actions */}
-                <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-slate-800">
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                      Transport Mode:
-                    </span>
-                    <select
-                      value={transportMode}
-                      onChange={(e) => setTransportMode(e.target.value as any)}
-                      className="bg-slate-950 border border-slate-800 text-white rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none focus:border-emerald-500"
-                    >
-                      <option value="motorbike">Motorbike Courier (Fastest in traffic)</option>
-                      <option value="vehicle">Dedicated Ambulance / Vehicle</option>
-                      <option value="public_service_vehicle">Regional Courier / PSV</option>
-                    </select>
-                  </div>
+                <div style={S.infoCellLast}>
+                  <div style={S.cellLabel}>ISBT-128 Barcodes to Retrieve</div>
+                  {d.unit_ids.map((uid) => (
+                    <span key={uid} style={S.unitId}>{uid}</span>
+                  ))}
+                </div>
+              </div>
 
-                  <div className="flex items-center gap-3">
-                    {d.status === 'AwaitingRelease' && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => setModalDeclineId(d.id)}
-                          className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900/60 px-4 py-2 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5"
-                        >
-                          <XCircle className="w-4 h-4 text-rose-400" />
-                          Decline Order
-                        </button>
-                        <button
-                          type="button"
-                          disabled={isSubmitting}
-                          onClick={() => handleConfirmRelease(d.id)}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-lg shadow-emerald-950/30"
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                          Confirm Packaging &amp; Release
-                        </button>
-                      </>
-                    )}
+              {/* Footer: transport + actions */}
+              <div style={S.cardFoot}>
+                <div style={S.transportRow}>
+                  <span style={S.transportLabel}>Transport</span>
+                  <select
+                    value={transportMode}
+                    onChange={(e) => setTransportMode(e.target.value as typeof transportMode)}
+                    style={S.transportSelect}
+                  >
+                    <option value="motorbike">Motorbike Courier (Fastest)</option>
+                    <option value="vehicle">Dedicated Ambulance / Vehicle</option>
+                    <option value="public_service_vehicle">Regional Courier / PSV</option>
+                  </select>
+                </div>
 
-                    {d.status === 'Released' && (
+                <div style={S.actionRow}>
+                  {d.status === 'AwaitingRelease' && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setModalDeclineId(d.id)}
+                        style={btn('outline-danger')}
+                      >
+                        Decline Order
+                      </button>
                       <button
                         type="button"
                         disabled={isSubmitting}
-                        onClick={() => handleMarkInTransit(d.id)}
-                        className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-lg shadow-blue-950/30"
+                        onClick={() => handleConfirmRelease(d.id)}
+                        style={btn('primary')}
                       >
-                        <Navigation className="w-4 h-4" />
-                        Handed to Courier · Mark In Transit
+                        ✓ Confirm & Release
                       </button>
-                    )}
+                    </>
+                  )}
 
-                    {d.status === 'InTransit' && (
-                      <span className="text-blue-400 text-xs font-semibold flex items-center gap-1.5">
-                        <Truck className="w-4 h-4 animate-bounce" />
-                        Blood En-Route with Courier
-                      </span>
-                    )}
-                  </div>
+                  {d.status === 'Released' && (
+                    <button
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={() => handleMarkInTransit(d.id)}
+                      style={btn('primary')}
+                    >
+                      → Mark In Transit
+                    </button>
+                  )}
+
+                  {d.status === 'InTransit' && (
+                    <span style={S.inTransitStatus}>↑ Blood En Route</span>
+                  )}
                 </div>
               </div>
-            ))}
-          </div>
+            </div>
+          ))
         )}
       </div>
 
       {/* Decline Modal */}
       {modalDeclineId && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-white">Decline Dispatch Order #{modalDeclineId}</h3>
-            <p className="text-xs text-slate-300">
-              Provide an operational reason for declining this request. The system will release the held units and offer the next ranked facility to the blood bank officer.
+        <div style={S.overlay}>
+          <div style={S.modal}>
+            <div style={S.modalTitle}>Decline Dispatch Order #{modalDeclineId}</div>
+            <p style={S.modalBody}>
+              Provide an operational reason for declining. The system will release the held units
+              and offer the next ranked facility to the blood bank officer.
             </p>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                Decline Reason:
-              </label>
+              <label style={S.textareaLabel}>Decline Reason</label>
               <textarea
                 value={declineReason}
                 onChange={(e) => setDeclineReason(e.target.value)}
                 rows={3}
                 placeholder="e.g., Cold storage breach detected during physical verification, or courier transport unavailable."
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-rose-500"
+                style={S.textarea}
               />
             </div>
 
-            <div className="flex gap-3 pt-2">
+            <div style={S.modalButtons}>
               <button
                 type="button"
                 onClick={() => setModalDeclineId(null)}
-                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 py-2.5 rounded-xl text-xs font-semibold"
+                style={{ ...btn('secondary'), cursor: 'pointer', opacity: 1 }}
               >
                 Cancel
               </button>
@@ -349,7 +657,7 @@ export const LabDispatchView: React.FC = () => {
                 type="button"
                 disabled={isSubmitting || !declineReason.trim()}
                 onClick={() => handleDecline(modalDeclineId)}
-                className="flex-1 bg-rose-600 hover:bg-rose-500 text-white py-2.5 rounded-xl text-xs font-bold disabled:opacity-50"
+                style={{ ...btn('danger'), opacity: (isSubmitting || !declineReason.trim()) ? 0.5 : 1 }}
               >
                 Confirm Decline
               </button>

@@ -1,22 +1,42 @@
 import React, { useState, useEffect } from 'react'
 import type { EmergencyRequest, OptionsResponse } from '../types'
 import { api } from '../api/client'
-import {
-  Clock,
-  ShieldCheck,
-  AlertTriangle,
-  CheckCircle2,
-  RefreshCw,
-  XCircle,
-  Sparkles,
-  Lock,
-  ArrowRight,
-  Navigation,
-} from 'lucide-react'
 
-export const OfficerDecisionView: React.FC<{ selectedRequestId?: number }> = ({
-  selectedRequestId,
-}) => {
+const S = {
+  page: { maxWidth: 1100, margin: '0 auto', padding: '32px 24px' } as React.CSSProperties,
+  section: { marginBottom: 32 } as React.CSSProperties,
+  label: { fontSize: 11, fontFamily: 'var(--mono)', textTransform: 'uppercase' as const, letterSpacing: '0.08em', color: 'var(--ink-faint)', marginBottom: 6, display: 'block' } as React.CSSProperties,
+  card: { background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, padding: 24 } as React.CSSProperties,
+  rule: { borderTop: '1px solid var(--rule)', margin: '20px 0' } as React.CSSProperties,
+  h2: { fontSize: 20, fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--ink)', margin: 0 } as React.CSSProperties,
+  h3: { fontSize: 15, fontWeight: 600, color: 'var(--ink)', margin: 0 } as React.CSSProperties,
+  muted: { fontSize: 13, color: 'var(--ink-muted)' } as React.CSSProperties,
+  mono: { fontFamily: 'var(--mono)' } as React.CSSProperties,
+  badge: (color: string) => ({
+    display: 'inline-block', fontSize: 11, fontFamily: 'var(--mono)',
+    padding: '2px 8px', borderRadius: 3, background: color === 'red' ? '#FEF2F2' : color === 'green' ? '#F0FDF4' : '#FFF7ED',
+    color: color === 'red' ? '#B91C1C' : color === 'green' ? '#15803D' : '#B45309',
+    border: `1px solid ${color === 'red' ? '#FECACA' : color === 'green' ? '#BBF7D0' : '#FED7AA'}`,
+  } as React.CSSProperties),
+}
+
+const btn = (variant: 'primary' | 'secondary' | 'danger', disabled = false): React.CSSProperties => ({
+  padding: '10px 20px', fontSize: 13, fontWeight: 500, borderRadius: 6,
+  cursor: disabled ? 'not-allowed' : 'pointer', border: 'none',
+  opacity: disabled ? 0.5 : 1, transition: 'background 0.1s',
+  background: variant === 'primary' ? 'var(--safe)' : variant === 'danger' ? 'var(--accent)' : 'var(--surface-raised)',
+  color: variant === 'primary' || variant === 'danger' ? '#fff' : 'var(--ink)',
+  outline: variant === 'secondary' ? '1px solid var(--rule)' : 'none',
+})
+
+function formatEta(min: number): string {
+  const m = Math.round(min)
+  if (m < 60) return `${m} min`
+  const h = Math.floor(m / 60), r = m % 60
+  return r === 0 ? `${h}h` : `${h}h ${r}min`
+}
+
+export const OfficerDecisionView: React.FC<{ selectedRequestId?: number }> = ({ selectedRequestId }) => {
   const [requests, setRequests] = useState<EmergencyRequest[]>([])
   const [activeReqId, setActiveReqId] = useState<number | null>(selectedRequestId || null)
   const [optionsData, setOptionsData] = useState<OptionsResponse | null>(null)
@@ -24,500 +44,362 @@ export const OfficerDecisionView: React.FC<{ selectedRequestId?: number }> = ({
   const [isLoading, setIsLoading] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [successMsg, setSuccessMsg] = useState<string | null>(null)
-
-  // Escalation timer countdown: 5 minutes (300 seconds)
-  const [timerSeconds, setTimerSeconds] = useState<number>(285)
-
-  // Modals for Change and Reject with mandatory reason input
+  const [notice, setNotice] = useState<string | null>(null)
+  const [timerSeconds, setTimerSeconds] = useState(285)
   const [modalMode, setModalMode] = useState<'change' | 'reject' | null>(null)
-  const [decisionReason, setDecisionReason] = useState<string>('')
+  const [decisionReason, setDecisionReason] = useState('')
 
-  // Load pending requests
+  useEffect(() => { loadRequests() }, [])
   useEffect(() => {
-    loadRequests()
+    const t = setInterval(() => setTimerSeconds(s => s > 0 ? s - 1 : 0), 1000)
+    return () => clearInterval(t)
   }, [])
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTimerSeconds((prev) => (prev > 0 ? prev - 1 : 0))
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [])
+  useEffect(() => { if (activeReqId) loadOptions(activeReqId) }, [activeReqId])
 
   const loadRequests = async () => {
     setIsLoading(true)
-    setError(null)
     try {
       const res = await api.getRequests({ status: 'AwaitingDecision,Escalated' })
-      const list = Array.isArray(res) ? res : res.results || []
-      // If none currently awaiting, fall back to general list
-      let targetList = list
-      if (targetList.length === 0) {
-        const allRes = await api.getRequests()
-        targetList = Array.isArray(allRes) ? allRes : allRes.results || []
+      let list = Array.isArray(res) ? res : res.results || []
+      if (list.length === 0) {
+        const all = await api.getRequests()
+        list = Array.isArray(all) ? all : all.results || []
       }
-      setRequests(targetList)
-      if (targetList.length > 0 && !activeReqId) {
-        setActiveReqId(targetList[0].id)
-      }
+      setRequests(list)
+      if (list.length > 0 && !activeReqId) setActiveReqId(list[0].id)
     } catch {
       const cached = localStorage.getItem('gh_clinician_requests')
       if (cached) {
         const list = JSON.parse(cached) as EmergencyRequest[]
         setRequests(list)
-        if (list.length > 0 && !activeReqId) {
-          setActiveReqId(list[0].id)
-        }
-      } else {
-        const demoReq: EmergencyRequest = {
-          id: 1042,
-          requesting_facility_id: 'HSP-002',
-          requesting_facility_name: 'Kakamega County Referral Hospital',
-          patient_blood_group: 'O+',
-          component: 'RBC',
-          units_requested: 2,
-          urgency: 'life_threatening',
-          clinical_note: 'Severe maternity PPH in theatre 2, rapid resuscitation required.',
-          status: 'AwaitingDecision',
-          compatible_groups: ['O+', 'O-'],
-          eta_method: 'model',
-          created_at: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
-        }
-        setRequests([demoReq])
-        setActiveReqId(demoReq.id)
+        if (list.length > 0 && !activeReqId) setActiveReqId(list[0].id)
       }
-    } finally {
-      setIsLoading(false)
-    }
+    } finally { setIsLoading(false) }
   }
 
-  // Load options for the active request
-  useEffect(() => {
-    if (activeReqId) {
-      loadOptions(activeReqId)
-    }
-  }, [activeReqId])
-
   const loadOptions = async (reqId: number) => {
-    setIsLoading(true)
-    setError(null)
-    setOptionsData(null)
+    setIsLoading(true); setError(null); setOptionsData(null)
     try {
       const res = await api.getRequestOptions(reqId)
       setOptionsData(res)
       setSelectedOptionId(res.held_option_id || res.options[0]?.id || null)
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      setError(`Failed to fetch dispatch options for Request #${reqId}: ${errMsg}`)
-    } finally {
-      setIsLoading(false)
-    }
+      setError(err instanceof Error ? err.message : String(err))
+    } finally { setIsLoading(false) }
   }
 
   const handleAccept = async () => {
     if (!activeReqId) return
-    setIsSubmitting(true)
-    setError(null)
-    setSuccessMsg(null)
+    setIsSubmitting(true); setError(null); setNotice(null)
     try {
       await api.submitDecision(activeReqId, 'accept')
-      setSuccessMsg(`Decision confirmed: Rank 1 dispatch ACCEPTED. Assigned to supplying lab.`)
+      setNotice('Decision recorded. Dispatch confirmed.')
       await loadRequests()
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      setError(`Decision refused by server: ${errMsg}`)
-    } finally {
-      setIsSubmitting(false)
-    }
+      setError(err instanceof Error ? err.message : String(err))
+    } finally { setIsSubmitting(false) }
   }
 
-  const handleConfirmModalAction = async () => {
-    if (!activeReqId || !decisionReason.trim()) {
-      setError('A clinical reason (at least 3 characters) is mandatory to Change or Reject.')
+  const handleConfirmModal = async () => {
+    if (!activeReqId || decisionReason.trim().length < 3) {
+      setError('A clinical reason (minimum 3 characters) is mandatory.')
       return
     }
-    setIsSubmitting(true)
-    setError(null)
-    setSuccessMsg(null)
-
+    setIsSubmitting(true); setError(null); setNotice(null)
     try {
       if (modalMode === 'change') {
-        if (!selectedOptionId) throw new Error('Select an alternative option to change hold.')
+        if (!selectedOptionId) throw new Error('Select an alternative option.')
         await api.submitDecision(activeReqId, 'change', selectedOptionId, decisionReason)
-        setSuccessMsg(`Hold transferred to alternative site. Reason logged: "${decisionReason}".`)
+        setNotice('Hold transferred. Reason logged.')
       } else if (modalMode === 'reject') {
         await api.submitDecision(activeReqId, 'reject', undefined, decisionReason)
-        setSuccessMsg(`Request rejected and marked HandledManually. Reason logged: "${decisionReason}".`)
+        setNotice('Request rejected. Reason logged to audit trail.')
       }
-      setModalMode(null)
-      setDecisionReason('')
+      setModalMode(null); setDecisionReason('')
       await loadRequests()
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      setError(`Action failed: ${errMsg}`)
-    } finally {
-      setIsSubmitting(false)
-    }
+      setError(err instanceof Error ? err.message : String(err))
+    } finally { setIsSubmitting(false) }
   }
 
-  const formatTimer = (sec: number) => {
-    const m = Math.floor(sec / 60)
-    const s = sec % 60
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-  }
+  const activeReq = requests.find(r => r.id === activeReqId)
+  const mm = Math.floor(timerSeconds / 60), ss = timerSeconds % 60
+  const timerStr = `${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`
+  const timerUrgent = timerSeconds < 60
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-      {/* Top Officer Protocol Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+    <div style={S.page}>
+
+      {/* Page header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
         <div>
-          <div className="flex items-center gap-2 text-amber-400 text-xs font-semibold uppercase tracking-wider">
-            <ShieldCheck className="w-4 h-4" />
-            Blood Bank Dispatch Officer Terminal (RBTC Nairobi)
-          </div>
-          <h2 className="text-xl font-bold text-white mt-1">Multi-Facility Dispatch Decision</h2>
-          <p className="text-sm text-slate-400 mt-0.5">
-            Mandatory human gate: Automated AI ranker recommends options; blood bank officer approves or overrides.
+          <span style={S.label}>Blood Bank Officer · RBTC Nairobi</span>
+          <h2 style={S.h2}>Dispatch Decision</h2>
+          <p style={{ ...S.muted, marginTop: 4 }}>
+            Review AI-ranked options and make the final dispatch call. Human sign-off is mandatory.
           </p>
         </div>
-
-        {/* 5-Minute Escalation Countdown Indicator */}
-        <div className="flex items-center gap-3 bg-slate-950 border border-slate-800 px-4 py-2.5 rounded-xl">
-          <Clock className={`w-5 h-5 ${timerSeconds < 60 ? 'text-rose-500 animate-spin' : 'text-amber-400'}`} />
-          <div>
-            <div className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
-              Escalation Timer (5m SLA)
-            </div>
-            <div className={`text-base font-mono font-bold ${timerSeconds < 60 ? 'text-rose-400' : 'text-amber-300'}`}>
-              {formatTimer(timerSeconds)}
-            </div>
+        {/* SLA Timer */}
+        <div style={{
+          textAlign: 'right', flexShrink: 0,
+          borderLeft: `3px solid ${timerUrgent ? 'var(--accent)' : 'var(--rule)'}`,
+          paddingLeft: 16,
+        }}>
+          <span style={S.label}>Decision SLA</span>
+          <div style={{ fontSize: 28, fontFamily: 'var(--mono)', fontWeight: 500, color: timerUrgent ? 'var(--accent)' : 'var(--ink)' }}>
+            {timerStr}
           </div>
-          <div className="text-[11px] text-slate-500 border-l border-slate-800 pl-3 hidden sm:block">
-            Auto-escalates to backup officer if unattended
-          </div>
+          <span style={{ fontSize: 11, color: 'var(--ink-faint)' }}>Auto-escalates if unattended</span>
         </div>
       </div>
 
-      {/* Success or Error alerts */}
-      {successMsg && (
-        <div className="bg-emerald-950/60 border border-emerald-800 text-emerald-200 text-xs p-3.5 rounded-xl flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            <span>{successMsg}</span>
-          </div>
-          <button onClick={() => setSuccessMsg(null)} className="text-emerald-400 hover:text-white">
-            &times;
-          </button>
+      {/* Notices */}
+      {notice && (
+        <div style={{ padding: '12px 16px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, marginBottom: 16, fontSize: 13, color: '#15803D', display: 'flex', justifyContent: 'space-between' }}>
+          {notice}
+          <button onClick={() => setNotice(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#15803D' }}>✕</button>
         </div>
       )}
-
       {error && (
-        <div className="bg-rose-950/60 border border-rose-800 text-rose-200 text-xs p-3.5 rounded-xl flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-rose-400" />
-          <span>{error}</span>
+        <div style={{ padding: '12px 16px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, marginBottom: 16, fontSize: 13, color: '#B91C1C' }}>
+          {error}
         </div>
       )}
 
-      {/* Select active request from queue */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-        <span className="text-slate-400 font-semibold uppercase tracking-wider text-[11px] whitespace-nowrap">
-          Active Queue:
-        </span>
-        {requests.map((r) => (
-          <button
-            key={r.id}
-            onClick={() => {
-              setActiveReqId(r.id)
-              setSuccessMsg(null)
-            }}
-            className={`px-3 py-1.5 rounded-lg font-medium whitespace-nowrap border transition-all ${
-              activeReqId === r.id
-                ? 'bg-amber-600/20 border-amber-500 text-amber-300 shadow-sm'
-                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Req #{r.id} ({r.patient_blood_group} {r.component} · {r.units_requested}U)
-          </button>
-        ))}
-      </div>
-
-      {/* AI Mode Banner & Data-as-of */}
-      {optionsData && (
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 border border-slate-800 px-4 py-2.5 rounded-xl text-xs">
-          <div className="flex items-center gap-2">
-            {optionsData.ai_offline ? (
-              <span className="bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded font-medium flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                AI Model Offline · Fallback to Static Route Table Active
-              </span>
-            ) : (
-              <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded font-medium flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                AI Random Forest ETA Model Active · 35,181 Historic Transfers Trained
-              </span>
-            )}
-            <span className="text-slate-500 hidden sm:inline">|</span>
-            <span className="text-slate-400 hidden sm:inline">
-              Data Cut-Off As-Of: <strong className="text-slate-300">{optionsData.data_as_of}</strong>
-            </span>
-          </div>
-
-          <div className="text-slate-400 text-[11px]">
-            Baseline Static Lookup: <span className="line-through text-slate-500">17.8 min error</span> → Golden Hour ML: <strong className="text-emerald-400 font-mono">14.1 min MAE (-20.6%)</strong>
-          </div>
-        </div>
-      )}
-
-      {/* Ranked Options Grid */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-            <span>Ranked Dispatch Options (Auto-Held Best Site First)</span>
-          </h3>
-          <span className="text-xs text-slate-400">
-            Top choice pre-selected. Click another option to Change and accept.
-          </span>
-        </div>
-
-        {error && (
-          <div className="bg-rose-950/60 border border-rose-800 rounded-2xl p-6 text-center space-y-3">
-            <AlertTriangle className="w-8 h-8 text-rose-400 mx-auto" />
-            <p className="text-sm text-rose-200">{error}</p>
-            {activeReqId && (
+      {/* Request queue selector */}
+      {requests.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <span style={S.label}>Active Queue ({requests.length})</span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {requests.map(r => (
               <button
-                onClick={() => loadOptions(activeReqId)}
-                className="bg-slate-800 hover:bg-slate-700 text-white text-xs px-4 py-2 rounded-lg font-semibold inline-flex items-center gap-1.5 transition-colors"
+                key={r.id}
+                onClick={() => { setActiveReqId(r.id); setNotice(null) }}
+                style={{
+                  padding: '6px 14px', fontSize: 13, borderRadius: 6, cursor: 'pointer',
+                  border: '1px solid', transition: 'all 0.1s',
+                  background: activeReqId === r.id ? 'var(--ink)' : 'var(--surface)',
+                  color: activeReqId === r.id ? '#fff' : 'var(--ink-muted)',
+                  borderColor: activeReqId === r.id ? 'var(--ink)' : 'var(--rule)',
+                  fontFamily: 'var(--mono)',
+                }}
               >
-                <RefreshCw className="w-3.5 h-3.5" />
-                Retry Fetching Options
+                #{r.id} · {r.patient_blood_group} {r.component} ×{r.units_requested}
               </button>
-            )}
+            ))}
           </div>
-        )}
+        </div>
+      )}
 
-        {isLoading ? (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-400">
-            <RefreshCw className="w-8 h-8 text-amber-500 animate-spin mx-auto mb-3" />
-            <p className="text-sm">Calculating multi-criteria route optimization &amp; stock constraints...</p>
+      {/* Active request summary */}
+      {activeReq && (
+        <div style={{ ...S.card, marginBottom: 24 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 24 }}>
+            {[
+              { label: 'Blood Group', value: activeReq.patient_blood_group, big: true },
+              { label: 'Component', value: activeReq.component },
+              { label: 'Units', value: `×${activeReq.units_requested}` },
+              { label: 'Urgency', value: activeReq.urgency.replace('_', ' ') },
+              { label: 'Compatible Groups', value: (activeReq.compatible_groups || []).join(', ') },
+              { label: 'ETA Model', value: activeReq.eta_method === 'model' ? 'AI active' : 'Fallback' },
+            ].map(item => (
+              <div key={item.label}>
+                <span style={S.label}>{item.label}</span>
+                <div style={{ fontSize: item.big ? 22 : 15, fontWeight: item.big ? 600 : 500, fontFamily: item.big ? 'var(--mono)' : undefined, color: 'var(--ink)' }}>
+                  {item.value}
+                </div>
+              </div>
+            ))}
           </div>
-        ) : optionsData?.options && optionsData.options.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {optionsData.options.map((opt) => {
-              const isHeld = opt.id === optionsData.held_option_id
-              const isSelected = opt.id === selectedOptionId
+          {activeReq.clinical_note && (
+            <>
+              <div style={S.rule} />
+              <div>
+                <span style={S.label}>Clinical Note</span>
+                <p style={{ fontSize: 13, color: 'var(--ink-muted)', margin: 0 }}>{activeReq.clinical_note}</p>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
-              return (
-                <div
-                  key={opt.id}
-                  onClick={() => setSelectedOptionId(opt.id)}
-                  className={`relative rounded-2xl p-5 border cursor-pointer transition-all flex flex-col justify-between ${
-                    isSelected
-                      ? 'bg-slate-900 border-amber-500 shadow-xl shadow-amber-950/30 ring-1 ring-amber-500'
-                      : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
-                  }`}
-                >
-                  {/* Card Header */}
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full font-mono ${
-                        opt.rank === 1
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                          : 'bg-slate-800 text-slate-300'
-                      }`}>
-                        RANK #{opt.rank}
-                      </span>
+      {/* AI model status banner */}
+      {optionsData && (
+        <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: 'var(--ink-muted)' }}>
+          <span style={optionsData.ai_offline ? S.badge('orange') : S.badge('green')}>
+            {optionsData.ai_offline ? 'AI Offline · Route table fallback' : 'ML model active · 34,135 transfers trained'}
+          </span>
+          <span>Data as of {optionsData.data_as_of} · Emergency MAE 30.8 min (−25.8% vs baseline)</span>
+        </div>
+      )}
 
-                      {isHeld && (
-                        <span className="bg-rose-600/20 text-rose-300 border border-rose-500/40 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
-                          <Lock className="w-3 h-3 text-rose-400" />
-                          UNITS AUTO-HELD
-                        </span>
-                      )}
-                    </div>
-
-                    <h4 className="text-base font-bold text-white leading-snug">
-                      {opt.facility_name}
-                    </h4>
-                    <span className="text-[11px] font-mono text-slate-400">
-                      ID: {opt.facility_id}
+      {/* Ranked options */}
+      <span style={{ ...S.label, marginBottom: 12, display: 'block' }}>Ranked Dispatch Options</span>
+      {isLoading && (
+        <div style={{ ...S.card, textAlign: 'center', padding: 48, color: 'var(--ink-faint)', fontSize: 13 }}>
+          Calculating routes…
+        </div>
+      )}
+      {!isLoading && optionsData?.options && optionsData.options.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, marginBottom: 24 }}>
+          {optionsData.options.map(opt => {
+            const isHeld = opt.id === optionsData.held_option_id
+            const isSelected = opt.id === selectedOptionId
+            return (
+              <div
+                key={opt.id}
+                onClick={() => setSelectedOptionId(opt.id)}
+                style={{
+                  background: 'var(--surface)', borderRadius: 8,
+                  border: isSelected ? '2px solid var(--ink)' : '1px solid var(--rule)',
+                  padding: 20, cursor: 'pointer', transition: 'border-color 0.1s',
+                  position: 'relative',
+                }}
+              >
+                {/* Rank + hold badge */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <span style={{ ...S.badge(opt.rank === 1 ? 'green' : 'orange'), fontSize: 11 }}>
+                    #{opt.rank} {opt.rank === 1 ? '· Recommended' : ''}
+                  </span>
+                  {isHeld && (
+                    <span style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--ink-faint)' }}>
+                      Units held
                     </span>
+                  )}
+                </div>
 
-                    {/* Honest ETA Range Box */}
-                    <div className="mt-4 bg-slate-950 border border-slate-800/80 rounded-xl p-3">
-                      <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
-                        <span>Predicted Arrival (Honest Range)</span>
-                        <Navigation className="w-3.5 h-3.5 text-amber-400" />
-                      </div>
-                      <div className="mt-1 flex items-baseline gap-1.5">
-                        <span className="text-xl font-bold font-mono text-amber-300">
-                          {Math.round(opt.eta.mid_min)} min
-                        </span>
-                        <span className="text-xs text-slate-400 font-mono">
-                          ({Math.round(opt.eta.low_min)} – {Math.round(opt.eta.high_min)} min bounds)
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-slate-500 mt-1">
-                        ±{Math.round(opt.eta.high_min - opt.eta.mid_min)}m uncertainty (calibrated conformal interval)
-                      </div>
-                    </div>
+                {/* Facility name */}
+                <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink)', marginBottom: 4 }}>
+                  {opt.facility_name}
+                </div>
+                <div style={{ fontSize: 12, fontFamily: 'var(--mono)', color: 'var(--ink-faint)', marginBottom: 16 }}>
+                  {opt.facility_id}
+                </div>
 
-                    {/* Stock & Compatibility details */}
-                    <div className="mt-3 space-y-1 text-xs text-slate-300">
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Available Stock:</span>
-                        <span className="font-semibold text-emerald-400">{opt.units_available} unit(s)</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Reserved ISBT-128:</span>
-                        <span className="font-mono text-[11px] text-slate-300 truncate max-w-[150px]">
-                          {opt.unit_ids.join(', ')}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Supplying Groups:</span>
-                        <span className="font-semibold text-rose-300">
-                          {Array.from(new Set(opt.blood_groups)).join(', ')}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Plain Language Rationale */}
-                    <div className="mt-3 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/50 text-[11px] text-slate-300">
-                      <strong className="text-slate-400 block mb-0.5">Algorithm Rationale:</strong>
-                      {opt.reason}
-                    </div>
+                {/* ETA — the most important number */}
+                <div style={{ borderTop: '1px solid var(--rule)', borderBottom: '1px solid var(--rule)', padding: '14px 0', marginBottom: 16 }}>
+                  <span style={{ ...S.label, marginBottom: 2 }}>Estimated Arrival</span>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <span style={{ fontSize: 32, fontFamily: 'var(--mono)', fontWeight: 500, color: 'var(--ink)', lineHeight: 1 }}>
+                      {formatEta(opt.eta.mid_min)}
+                    </span>
+                    <span style={{ fontSize: 12, color: 'var(--ink-faint)', fontFamily: 'var(--mono)' }}>
+                      {formatEta(opt.eta.low_min)}–{formatEta(opt.eta.high_min)} range
+                    </span>
                   </div>
-
-                  {/* Radio Selection indicator */}
-                  <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                    <span className="text-slate-400">
-                      {isSelected ? 'Selected for Decision' : 'Click to inspect'}
-                    </span>
-                    <input
-                      type="radio"
-                      name="dispatch_option"
-                      checked={isSelected}
-                      onChange={() => setSelectedOptionId(opt.id)}
-                      className="accent-amber-500 w-4 h-4 cursor-pointer"
-                    />
+                  <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 4 }}>
+                    91.1% of real trips land inside this window
                   </div>
                 </div>
-              )
-            })}
-          </div>
-        ) : (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400">
-            No compatible donor stock available across facilities. Request routed to HandledManually.
-          </div>
-        )}
-      </div>
 
-      {/* Decision Buttons (Accept / Change / Reject) */}
+                {/* Key facts */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', fontSize: 12, marginBottom: 12 }}>
+                  <div>
+                    <span style={{ color: 'var(--ink-faint)' }}>Units available</span>
+                    <div style={{ fontWeight: 600, color: 'var(--ink)' }}>{opt.units_available}</div>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--ink-faint)' }}>Blood groups</span>
+                    <div style={{ fontWeight: 600, color: 'var(--ink)', fontFamily: 'var(--mono)' }}>
+                      {Array.from(new Set(opt.blood_groups)).join(', ')}
+                    </div>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--ink-faint)' }}>Cost score</span>
+                    <div style={{ fontWeight: 600, fontFamily: 'var(--mono)', color: 'var(--ink)' }}>{(opt as any).cost_score?.toFixed(3) ?? '—'}</div>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--ink-faint)' }}>ETA source</span>
+                    <div style={{ fontWeight: 600, color: 'var(--ink)' }}>{opt.method === 'model' ? 'ML model' : 'Route table'}</div>
+                  </div>
+                </div>
+
+                {/* Reason */}
+                {opt.reason && (
+                  <div style={{ fontSize: 12, color: 'var(--ink-muted)', borderTop: '1px solid var(--rule)', paddingTop: 10 }}>
+                    {opt.reason}
+                  </div>
+                )}
+
+                {/* Warnings */}
+                {opt.warnings && opt.warnings.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    {opt.warnings.map((w: string) => (
+                      <div key={w} style={{ fontSize: 11, color: 'var(--warn)', marginBottom: 2 }}>⚠ {w}</div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Selection indicator */}
+                <div style={{ position: 'absolute', top: 20, right: 20, width: 16, height: 16, borderRadius: '50%', border: '2px solid', borderColor: isSelected ? 'var(--ink)' : 'var(--rule)', background: isSelected ? 'var(--ink)' : 'transparent' }} />
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {!isLoading && optionsData && optionsData.options.length === 0 && (
+        <div style={{ ...S.card, textAlign: 'center', padding: 48, color: 'var(--ink-faint)', fontSize: 13 }}>
+          No compatible stock available. Request requires manual coordination.
+        </div>
+      )}
+
+      {/* Decision bar */}
       {optionsData?.options && optionsData.options.length > 0 && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h4 className="text-base font-bold text-white">Officer Approval &amp; Authorization Action</h4>
-              <p className="text-xs text-slate-400">
-                Release requires human approval. Accepting releases standing dispatch or routes to MoH authorising tier.
-              </p>
+        <div style={{ ...S.card, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
+          <div>
+            <div style={S.h3}>Your decision</div>
+            <div style={{ ...S.muted, fontSize: 12, marginTop: 4 }}>
+              Accepting sends to supplying lab or MoH for authorisation. Reason is logged to the immutable audit trail.
             </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Reject */}
-              <button
-                type="button"
-                onClick={() => {
-                  setModalMode('reject')
-                  setDecisionReason('')
-                }}
-                className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900/50 hover:border-rose-700 px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all"
-              >
-                <XCircle className="w-4 h-4 text-rose-400" />
-                Reject Dispatch
-              </button>
-
-              {/* Change (if another option chosen) */}
-              <button
-                type="button"
-                onClick={() => {
-                  setModalMode('change')
-                  setDecisionReason('')
-                }}
-                className="bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-600/40 px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all"
-              >
-                <ArrowRight className="w-4 h-4 text-amber-400" />
-                Change and accept
-              </button>
-
-              {/* Accept */}
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={handleAccept}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-lg shadow-emerald-950/40 flex items-center gap-2 transition-all disabled:opacity-50"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                Accept &amp; Authorize Option #{optionsData.held_option_id}
-              </button>
-            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button onClick={() => { setModalMode('reject'); setDecisionReason('') }} style={btn('danger')}>
+              Reject
+            </button>
+            <button onClick={() => { setModalMode('change'); setDecisionReason('') }} style={btn('secondary')}>
+              Change &amp; Accept
+            </button>
+            <button disabled={isSubmitting} onClick={handleAccept} style={btn('primary', isSubmitting)}>
+              {isSubmitting ? 'Submitting…' : 'Accept — Dispatch'}
+            </button>
           </div>
         </div>
       )}
 
-      {/* Modal for Mandatory Reason when Changing or Rejecting */}
+      {/* Modal */}
       {modalMode && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-amber-400" />
-              <h3 className="text-base font-bold text-white capitalize">
-                {modalMode === 'change' ? 'Override & Transfer Unit Hold' : 'Reject Emergency Request'}
-              </h3>
-            </div>
-
-            <p className="text-xs text-slate-300">
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ background: 'var(--surface)', borderRadius: 10, padding: 32, maxWidth: 480, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ ...S.h3, marginBottom: 12 }}>
+              {modalMode === 'change' ? 'Override & transfer hold' : 'Reject request'}
+            </h3>
+            <p style={{ ...S.muted, marginBottom: 20 }}>
               {modalMode === 'change'
-                ? `You are changing the dispatch destination to Option #${selectedOptionId}. The database will atomically release the old hold and reserve units at the new facility.`
-                : 'Rejecting this request will release all reserved units and escalate the case to manual phone-based emergency protocols.'}
+                ? `Units will be atomically moved from option ${optionsData?.held_option_id} to option ${selectedOptionId}.`
+                : 'All held units will be released. The case escalates to manual coordination.'}
             </p>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                Mandatory Clinical / Operational Justification:
-              </label>
-              <textarea
-                value={decisionReason}
-                onChange={(e) => setDecisionReason(e.target.value)}
-                rows={3}
-                placeholder={
-                  modalMode === 'change'
-                    ? 'e.g. Rank 1 courier vehicle unavailable; Rank 2 facility has faster motorbike dispatch route.'
-                    : 'e.g. Patient transferred to ICU referral centre; local emergency request cancelled.'
-                }
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white text-xs focus:outline-none focus:border-amber-500"
-              />
-              <span className="text-[11px] text-slate-500">
-                Minimum 3 characters. This explanation is committed to the immutable audit log.
-              </span>
+            <label style={S.label}>Mandatory clinical justification</label>
+            <textarea
+              value={decisionReason}
+              onChange={e => setDecisionReason(e.target.value)}
+              rows={3}
+              placeholder={modalMode === 'change'
+                ? 'e.g. Rank 1 courier unavailable; motorbike from Rank 2 is faster on this route.'
+                : 'e.g. Patient transferred to referral centre; request cancelled.'}
+              style={{
+                width: '100%', padding: '10px 12px', fontSize: 13, borderRadius: 6,
+                border: '1px solid var(--rule)', fontFamily: 'var(--sans)', marginBottom: 8,
+                resize: 'vertical', color: 'var(--ink)',
+              }}
+            />
+            <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginBottom: 20 }}>
+              Minimum 3 characters. This is committed to the immutable audit log.
             </div>
-
-            <div className="flex gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setModalMode(null)}
-                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 py-2.5 rounded-xl text-xs font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isSubmitting || decisionReason.trim().length < 3}
-                onClick={handleConfirmModalAction}
-                className="flex-1 bg-amber-600 hover:bg-amber-500 text-white py-2.5 rounded-xl text-xs font-bold disabled:opacity-50"
-              >
-                {isSubmitting ? 'Recording Decision...' : 'Confirm Override'}
+            {error && <div style={{ fontSize: 12, color: 'var(--accent)', marginBottom: 12 }}>{error}</div>}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setModalMode(null)} style={{ ...btn('secondary'), flex: 1 }}>Cancel</button>
+              <button disabled={isSubmitting || decisionReason.trim().length < 3} onClick={handleConfirmModal} style={{ ...btn(modalMode === 'reject' ? 'danger' : 'primary', isSubmitting || decisionReason.trim().length < 3), flex: 1 }}>
+                {isSubmitting ? 'Recording…' : 'Confirm'}
               </button>
             </div>
           </div>
