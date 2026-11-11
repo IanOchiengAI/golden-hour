@@ -51,7 +51,7 @@ Everything here runs end to end on the starter dataset and is covered by tests (
 - **Live stock:** stock is the static dataset snapshot of 31 October 2026, plus the holds made in the app.
 - **Hosting:** there is no deployed instance.
 
-Demo video (3 minutes or less): [link added at submission]
+Demo video (3 minutes or less): https://drive.google.com/file/d/1c_fuNwKFBfdjIadU25gHUMRwuryUeXUc/view?usp=sharing
 Live demo: Runs locally, see How to run
 
 **Test log-ins** (all synthetic). The sign-in page also has "Sign in as a test user" buttons. The password is `demo2026` for every account.
@@ -219,7 +219,7 @@ Each entry is in the member's own words.
 
 - **Ian Ochieng:** Google Antigravity (Gemini). Data exploration, cleaning the transfer data, training and tuning the arrival-time model, conformal prediction intervals, the ranking algorithm, ML code review, the end-to-end test script and the numbers document.
 - **Joronimo Amanya:** Google Antigravity with Gemini 4 Argon. Fitting the user interface to the architecture.
-- **Roland Sankara:** Claude (planning) and Claude Code (coding assistant).
+- **Roland Sankara:** Claude Opus 5.5 (Anthropic): planning, and Claude Code as coding assistant.
 - **Daniel Bitengo:** Claude Code (Claude Sonnet 5.5, Anthropic). Reviewing the backend, running end-to-end and browser tests, writing the data model and security documentation, building and wiring the offline outbox (`frontend/src/offline`), and checking this README against the code. Daniel checked everything against the code.
 
 No large language model runs inside the product.
