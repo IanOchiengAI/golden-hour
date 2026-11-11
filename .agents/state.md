@@ -48,6 +48,7 @@
 | 2026-11-10 21:15–22:20 | Amanya | Frontend built on branch `front-end`: React 19 + TypeScript + Vite + Tailwind CSS. 6 core views wired: Clinician request form, Blood Bank Officer decision (with honest ETA range, 5m timer, Accept/Change/Reject), MoH authorisation tier, Supplying Lab dispatch (supplier-safe, no patient fields), Audit trail explorer (KDPA), and 47-facility stock readiness grid. Vite proxy configured to `http://localhost:8000`. Clean TypeScript build verified. |
 | 2026-11-10 22:00–23:00 | Ian | Full ML retraining session: emergency weighting (3×/2×/1×), conformal intervals calibrated on emergency+urgent transfers (n=1,028) yielding 91.1% emergency coverage (target ≥90% met). Final MAE numbers: overall 14.5 min (20.7% better), emergencies 30.8 min (25.8% better). `docs/ian-numbers.md` written. |
 | 2026-11-11 06:30 | Ian | Final sprint review: verified 110 tests, merged frontend fake-data fix (PR #14 / Issue #10), applied `n_jobs=1` optimization in `ml/predict.py` (2.6× faster), rewritten `docs/e2e_test.py` to use stdlib `urllib` and match Django API contract, updated documentation. |
+| 2026-11-11 06:45–06:58 | Ian | Professional ML code review executed. Fixed `predict.py` falsy `mid` check and added structured ML error logging; cleaned up `ranking.py` logging imports and documentation. Corrected README team attribution (Roland Sankara is Team Lead; Ian is AI & Algorithm Architect). Ran full verification: all 110 Django backend tests pass (332s), full black-box E2E test passed (25/25 checks), and `scripts/try_flow.py` completed live Raised→Received lifecycle in <5s. Both backend (8000) and frontend Vite (5173) active locally. |
 
 ---
 
@@ -102,9 +103,10 @@
 
 ## In Progress 🔄
 
-- [ ] Connect live backend endpoints to frontend once backend server is booted locally
-- [ ] Backend list endpoints (`GET /requests`, `GET /dispatches`)
-- [ ] ML fixes (Ian) — ETA range, ranking, method flag, `data_as_of`
+- [x] ~~Connect live backend endpoints to frontend once backend server is booted locally~~ — Backend running on 8000, Frontend running on 5173
+- [x] ~~ML fixes (Ian) — ETA range, ranking, method flag, `data_as_of`~~ — Done & verified in test suite and try_flow
+- [ ] Record demo video (deadline 10:00 EAT, ≤ 3 min)
+- [ ] Submit check-in/submission form (deadline 12:00 EAT)
 
 ---
 
@@ -127,9 +129,9 @@
 - [x] ~~`blood_system.sqlite` is a 0-byte file in git~~ — Rebuilt 53 MB database file tracked on main.
 - [x] ~~ETA interval coverage is 19.2%~~ — Fixed via emergency conformal calibration: 91.1% on emergencies (see `docs/ian-numbers.md`).
 - [x] ~~No frontend code in the repo yet~~ — Full React + Vite + Tailwind frontend in `frontend/`.
+- [x] ~~README.md needs submission template update~~ — Completed with verified metrics, architecture diagram, and run steps (commit 514413a).
 - [ ] **Demo video not recorded yet** (deadline 10:00 EAT, ≤ 3 min).
-- [ ] **README.md needs submission template update** with final numbers, architecture, and live run instructions.
-- [ ] **Live deployment link** (optional for grading if local demo runs, but required on form).
+- [ ] **Submit final submission form** (deadline 12:00 EAT).
 
 ## Notes for owners (from backend integration)
 
