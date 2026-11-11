@@ -1,0 +1,59 @@
+# Sample values to show that rules change by settings, not code.
+# These are not Uganda's official rules.
+#
+# Switch to this file by setting COUNTRY_CONFIG to its path, then restart the backend.
+# A relative path is read from the folder you start the server in. From backend/
+# that is ../config/uganda.yaml. See config/README.md for the keys and the proof run.
+
+country: Uganda
+country_code: UG
+timezone: Africa/Kampala
+
+# The starter dataset ends on this date, so it stays the same here.
+data_as_of: 2026-10-31
+
+# per_transfer = every transfer waits for MoH approval before dispatch, even
+# life-threatening ones. (Kenya's sample uses "standing".)
+emergency_authorisation: per_transfer
+
+# Target time for blood to arrive, by clinical urgency (minutes).
+urgency_targets_min:
+  life_threatening: 60
+  urgent: 240
+  routine: 1440
+
+# Only used to show a "decide by" time on the screens. No timer acts on them yet.
+decision_escalation_min: 10
+authorisation_escalation_min: 15
+
+# Ranked sites shown to the blood bank officer.
+options_count: 2
+# Nearest sites (by route table) passed to the ETA model for ranking.
+ranking_shortlist: 10
+
+# Highest safe cool box temperature during transport (°C). Above this on
+# arrival, the receiving lab is told to quarantine the units.
+coolbox_max_temp_c: 8
+
+# Units held for a request that is still waiting for the blood bank officer or
+# MoH are released after this long, and the request moves to HandledManually
+# (handle by phone).
+hold_ttl_min: 20
+
+# Most requests one facility can have open (not yet dispatched) at once.
+max_open_requests_per_facility: 8
+
+# Upper limit on units in one request (input validation).
+max_units_per_request: 6
+
+# Facility types allowed to send blood in an emergency.
+supplying_facility_types:
+  - regional_blood_centre
+  - satellite_blood_centre
+  - national_referral
+  - county_referral
+  - county_hospital
+  - sub_county_hospital
+  - maternity_hospital
+  - mission_hospital
+  - private_hospital
