@@ -1,3 +1,5 @@
+import sys
+sys.stdout.reconfigure(encoding="utf-8")
 """
 Walk one request from Raised to Received against a running server, printing
 each step. Standard library only, so it runs the same on Windows, macOS and Linux.

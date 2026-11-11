@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import sys
+sys.stdout.reconfigure(encoding="utf-8")
 """
 Golden Hour — End-to-End API Test Script
 =========================================
