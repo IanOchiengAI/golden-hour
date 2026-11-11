@@ -51,8 +51,8 @@ Everything here runs end to end on the starter dataset and is covered by tests (
 - **Live stock:** stock is the static dataset snapshot of 31 October 2026, plus the holds made in the app.
 - **Hosting:** there is no deployed instance.
 
-Demo video (3 minutes or less): https://drive.google.com/file/d/1c_fuNwKFBfdjIadU25gHUMRwuryUeXUc/view?usp=sharing
-Live demo: Runs locally, see How to run
+- **Demo video (3 minutes or less):** https://drive.google.com/file/d/1c_fuNwKFBfdjIadU25gHUMRwuryUeXUc/view?usp=sharing
+- **Live demo:** none deployed. It runs locally, see How to run.
 
 **Test log-ins** (all synthetic). The sign-in page also has "Sign in as a test user" buttons. The password is `demo2026` for every account.
 
