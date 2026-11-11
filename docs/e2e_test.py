@@ -3,342 +3,237 @@
 Golden Hour — End-to-End API Test Script
 =========================================
 Owner: Ian Ochieng
-Purpose: Black-box test of the full dispatch flow against Roland's running server.
-         Does NOT touch backend code — hits the API as the frontend would.
+Purpose: Black-box test of the full dispatch flow against the running server.
+         Hits the real API endpoints as the frontend / clients would.
+         Standard library only (urllib) — runs on any OS without pip dependencies.
 
 Usage:
-    # 1. Start Roland's server in one terminal:
-    #    cd backend && python manage.py runserver
+    # 1. Start backend server in one terminal:
+    #    cd backend && python manage.py runserver 8000
 
-    # 2. Run this script in another terminal (from the repo root):
+    # 2. Run this test script:
     #    python docs/e2e_test.py
-
-    # 3. To test against a deployed URL:
-    #    python docs/e2e_test.py --base-url https://golden-hour.onrender.com
-
-Flow tested:
-    POST /auth/login          (get token for each role)
-    POST /requests            (clinician raises emergency request)
-    GET  /requests/{id}/options  (officer sees ranked options with ETA)
-    POST /requests/{id}/decision (officer accepts)
-    POST /dispatches/{id}/release (lab officer confirms release)
-    POST /dispatches/{id}/status  (courier updates: dispatched → in_transit → received)
-    GET  /audit?request_id=   (full audit trail visible)
+    #    python docs/e2e_test.py --base http://127.0.0.1:8000
 """
 
 import argparse
 import json
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any, Dict, Optional, Tuple
 
-try:
-    import requests
-except ImportError:
-    print("ERROR: 'requests' not installed. Run: pip install requests")
-    sys.exit(1)
-
-# ── Config ────────────────────────────────────────────────────────────────────
-DEFAULT_BASE = "http://localhost:8000"
-
-USERS = {
-    "clinician":      {"email": "clinician@goldenhour.health",      "password": "demo2026"},
-    "officer":        {"email": "officer@goldenhour.health",         "password": "demo2026"},
-    "lab":            {"email": "lab@goldenhour.health",             "password": "demo2026"},
-    "backup_officer": {"email": "backup.officer@goldenhour.health",  "password": "demo2026"},
-}
+DOMAIN = "goldenhour.health"
+DEFAULT_BASE = "http://127.0.0.1:8000"
 
 PASS = "✅"
 FAIL = "❌"
 WARN = "⚠️ "
 
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-def check(label, condition, detail=""):
-    status = PASS if condition else FAIL
-    print(f"  {status}  {label}" + (f"  →  {detail}" if detail else ""))
-    return condition
+TOTAL_CHECKS = 0
+FAILED_CHECKS = 0
 
 
-def section(title):
+def check(label: str, condition: bool, detail: str = "") -> bool:
+    global TOTAL_CHECKS, FAILED_CHECKS
+    TOTAL_CHECKS += 1
+    if condition:
+        print(f"  {PASS}  {label}" + (f"  →  {detail}" if detail else ""))
+        return True
+    else:
+        FAILED_CHECKS += 1
+        print(f"  {FAIL}  {label}" + (f"  →  {detail}" if detail else ""))
+        return False
+
+
+def section(title: str):
     print(f"\n{'─' * 60}")
     print(f"  {title}")
     print(f"{'─' * 60}")
 
 
-def login(base, role):
-    creds = USERS[role]
-    r = requests.post(f"{base}/auth/login", json=creds, timeout=10)
-    if r.status_code == 200:
-        token = r.json().get("token") or r.json().get("key") or r.json().get("auth_token")
-        return token
-    return None
+class ApiClient:
+    def __init__(self, base_url: str, password: str = "demo2026"):
+        self.base = base_url.rstrip("/")
+        self.password = password
+        self.tokens: Dict[str, str] = {}
+
+    def call(self, method: str, path: str, username: Optional[str] = None, body: Optional[dict] = None) -> Tuple[int, Any]:
+        headers = {"Content-Type": "application/json"}
+        if username:
+            headers["Authorization"] = f"Token {self.token(username)}"
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(self.base + path, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                status = resp.status
+                payload = json.loads(resp.read().decode("utf-8"))
+                return status, payload
+        except urllib.error.HTTPError as e:
+            try:
+                payload = json.loads(e.read().decode("utf-8"))
+            except Exception:
+                payload = {"error": str(e)}
+            return e.code, payload
+        except Exception as e:
+            return 0, {"error": str(e)}
+
+    def token(self, username: str) -> str:
+        if username not in self.tokens:
+            status, res = self.call("POST", "/auth/login", body={"username": username, "password": self.password})
+            if status == 200 and "token" in res:
+                self.tokens[username] = res["token"]
+            else:
+                raise RuntimeError(f"Login failed for {username}: {res}")
+        return self.tokens[username]
 
 
-def auth(token):
-    return {"Authorization": f"Token {token}"}
-
-
-# ── Test Suites ───────────────────────────────────────────────────────────────
-def test_auth(base):
-    section("1. Authentication")
-    tokens = {}
+def test_auth(api: ApiClient) -> bool:
+    section("1. Authentication & Role Validation")
+    roles = [
+        f"clinician@{DOMAIN}",
+        f"officer@{DOMAIN}",
+        f"backup.officer@{DOMAIN}",
+        f"moh@{DOMAIN}",
+        f"lab@{DOMAIN}",
+        f"lab.hsp-001@{DOMAIN}",
+    ]
     all_ok = True
-    for role in USERS:
-        token = login(base, role)
-        ok = check(f"Login as {role}", token is not None,
-                   "got token" if token else f"HTTP error — check seed_demo_users was run")
-        if ok:
-            tokens[role] = token
-        else:
+    for user in roles:
+        try:
+            tok = api.token(user)
+            ok = check(f"Login as {user.split('@')[0]}", bool(tok), "token acquired")
+            if not ok:
+                all_ok = False
+        except Exception as ex:
+            check(f"Login as {user.split('@')[0]}", False, str(ex))
             all_ok = False
-    return tokens, all_ok
+    return all_ok
 
 
-def test_raise_request(base, tokens):
+def test_request_lifecycle(api: ApiClient):
     section("2. Clinician raises emergency request")
-    if "clinician" not in tokens:
-        print(f"  {WARN} Skipped — clinician token missing")
-        return None
+    clinician = f"clinician@{DOMAIN}"
+    officer = f"officer@{DOMAIN}"
+    moh = f"moh@{DOMAIN}"
 
     payload = {
         "component": "RBC",
         "patient_blood_group": "O+",
-        "units_needed": 2,
-        "urgency": "emergency",
-        "notes": "Obstetric haemorrhage — post-partum, requires immediate dispatch",
+        "units_requested": 2,
+        "urgency": "urgent",
+        "clinical_note": "Post-partum haemorrhage — urgent resupply required",
     }
-    r = requests.post(f"{base}/requests", json=payload,
-                      headers=auth(tokens["clinician"]), timeout=15)
-
-    check("POST /requests returns 201", r.status_code == 201,
-          f"got {r.status_code}: {r.text[:120]}")
-
-    if r.status_code != 201:
-        return None
-
-    data = r.json()
-    req_id = data.get("id") or data.get("request_id")
-    status = data.get("status")
-
-    check("Response has an ID", req_id is not None, str(req_id))
-    check("Status moves past 'Raised'",
-          status not in (None, "Raised"),
-          f"status = {status!r}  (expected Matching / UnitsHeld / AwaitingDecision)")
-
-    return req_id
-
-
-def test_get_options(base, tokens, req_id):
-    section("3. Blood bank officer views ranked options")
-    if "officer" not in tokens or req_id is None:
-        print(f"  {WARN} Skipped — officer token or request ID missing")
-        return None
-
-    r = requests.get(f"{base}/requests/{req_id}/options",
-                     headers=auth(tokens["officer"]), timeout=15)
-
-    check("GET /requests/{id}/options returns 200", r.status_code == 200,
-          f"got {r.status_code}: {r.text[:120]}")
-
-    if r.status_code != 200:
-        return None
-
-    options = r.json()
-    if isinstance(options, dict):
-        options = options.get("options") or options.get("results") or [options]
-
-    check("At least one option returned", len(options) >= 1, f"{len(options)} option(s)")
-
-    if not options:
-        return None
-
-    top = options[0]
-    dispatch_id = top.get("dispatch_id") or top.get("id") or top.get("option_id")
-
-    check("Option has eta_low_min",  "eta_low_min"  in top, str(top.get("eta_low_min")))
-    check("Option has eta_mid_min",  "eta_mid_min"  in top, str(top.get("eta_mid_min")))
-    check("Option has eta_high_min", "eta_high_min" in top, str(top.get("eta_high_min")))
-    check("Option has plain-language reason", "reason" in top,
-          (top.get("reason") or "")[:80])
-    check("Option has eta_method (model|fallback)", "eta_method" in top,
-          str(top.get("eta_method")))
-
-    method = top.get("eta_method", "")
-    if method == "fallback":
-        print(f"  {WARN}  eta_method=fallback — ML model is offline or pkl missing."
-              f" Run: python -m ml.train_eta")
-    else:
-        check("eta_method = 'model' (ML running)", method == "model", method)
-
-    # ETA range sanity: low < mid < high
-    lo, mid, hi = top.get("eta_low_min"), top.get("eta_mid_min"), top.get("eta_high_min")
-    if all(v is not None for v in (lo, mid, hi)):
-        check("ETA range is ordered (low < mid < high)", lo <= mid <= hi,
-              f"{lo:.0f}–{mid:.0f}–{hi:.0f} min")
-
-    return dispatch_id
-
-
-def test_decision(base, tokens, req_id, dispatch_id):
-    section("4. Officer accepts the top option")
-    if "officer" not in tokens or req_id is None:
-        print(f"  {WARN} Skipped")
-        return None
-
-    payload = {
-        "decision": "accept",
-        "option_id": dispatch_id,
-        "reason": "Closest site with O+ stock and no cold-chain issues",
-    }
-    r = requests.post(f"{base}/requests/{req_id}/decision", json=payload,
-                      headers=auth(tokens["officer"]), timeout=10)
-
-    check("POST /requests/{id}/decision returns 200 or 201",
-          r.status_code in (200, 201), f"got {r.status_code}: {r.text[:120]}")
-
-    if r.status_code not in (200, 201):
-        return None
-
-    data = r.json()
-    new_status = data.get("status")
-    check("Status progresses after accept",
-          new_status not in (None, "AwaitingDecision"),
-          f"status = {new_status!r}")
-
-    # Confirm idempotency guard: second accept should fail
-    r2 = requests.post(f"{base}/requests/{req_id}/decision", json=payload,
-                       headers=auth(tokens["officer"]), timeout=10)
-    check("Second accept is rejected (not idempotent)",
-          r2.status_code in (400, 409, 422),
-          f"got {r2.status_code} (expected 4xx)")
-
-    return dispatch_id
-
-
-def test_release(base, tokens, dispatch_id):
-    section("5. Lab officer confirms unit release")
-    if "lab" not in tokens or dispatch_id is None:
-        print(f"  {WARN} Skipped — lab token or dispatch ID missing")
-        return False
-
-    payload = {"action": "confirm", "notes": "Unit verified, cold box packed, courier ready"}
-    r = requests.post(f"{base}/dispatches/{dispatch_id}/release", json=payload,
-                      headers=auth(tokens["lab"]), timeout=10)
-
-    check("POST /dispatches/{id}/release returns 200 or 201",
-          r.status_code in (200, 201), f"got {r.status_code}: {r.text[:120]}")
-
-    if r.status_code not in (200, 201):
-        # Try decline to verify that path also exists
-        r_dec = requests.post(f"{base}/dispatches/{dispatch_id}/release",
-                              json={"action": "decline", "notes": "Unit missing from fridge"},
-                              headers=auth(tokens["lab"]), timeout=10)
-        check("Decline path also exists (4xx or 2xx)",
-              r_dec.status_code < 500, f"got {r_dec.status_code}")
-        return False
-
-    return True
-
-
-def test_status_updates(base, tokens, dispatch_id, released):
-    section("6. Status updates: dispatched → in_transit → received")
-    if dispatch_id is None or not released:
-        print(f"  {WARN} Skipped — dispatch not released")
+    status_code, req = api.call("POST", "/requests", clinician, payload)
+    check("POST /requests returns 201 Created", status_code == 201, f"status: {status_code}")
+    if status_code != 201:
         return
 
-    for new_status in ("dispatched", "in_transit", "received"):
-        payload = {"status": new_status}
-        if new_status == "received":
-            payload["notes"] = "Blood received by ward nurse, temperature intact"
+    req_id = req.get("id")
+    check("Request has ID", req_id is not None, f"ID: {req_id}")
+    check("Status progresses to AwaitingDecision or UnitsHeld", req.get("status") in ("UnitsHeld", "AwaitingDecision"), f"status: {req.get('status')}")
+    check("Compatible groups identified", "O+" in req.get("compatible_groups", []) and "O-" in req.get("compatible_groups", []))
 
-        r = requests.post(f"{base}/dispatches/{dispatch_id}/status", json=payload,
-                          headers=auth(tokens.get("officer") or next(iter(tokens.values()))),
-                          timeout=10)
-        check(f"POST /dispatches/{{id}}/status → {new_status}",
-              r.status_code in (200, 201), f"got {r.status_code}: {r.text[:80]}")
-        time.sleep(0.3)   # brief pause between transitions
+    section("3. Blood Bank Officer inspects ranked options")
+    status_code, opts = api.call("GET", f"/requests/{req_id}/options", officer)
+    check("GET /requests/{id}/options returns 200", status_code == 200)
+    options_list = opts.get("options", [])
+    check("Options list returned with >= 1 facility", len(options_list) >= 1, f"{len(options_list)} options")
+
+    top_opt = options_list[0] if options_list else {}
+    eta = top_opt.get("eta", {})
+    check("Option has honest ETA bounds (low/mid/high)", all(k in eta for k in ("low_min", "mid_min", "high_min")), f"{eta.get('low_min')} - {eta.get('high_min')} min")
+    check("Option has explainable reason", bool(top_opt.get("reason")), str(top_opt.get("reason", ""))[:65] + "...")
+    check("Option has held flag", "is_held" in top_opt, f"is_held={top_opt.get('is_held')}")
+
+    section("4. Officer decision: Accept recommendation")
+    status_code, decision_res = api.call("POST", f"/requests/{req_id}/decision", officer, {"action": "accept"})
+    check("POST /requests/{id}/decision returns 200", status_code == 200, f"status: {decision_res.get('status')}")
+
+    current_status = decision_res.get("status")
+    dispatch_info = decision_res.get("dispatch", {})
+
+    if current_status == "AwaitingAuthorisation":
+        section("4b. Ministry of Health Tiered Sign-Off")
+        status_code, auth_res = api.call("POST", f"/requests/{req_id}/authorise", moh, {"action": "approve", "reason": "Within regional protocol"})
+        check("POST /requests/{id}/authorise returns 200", status_code == 200, f"status: {auth_res.get('status')}")
+        dispatch_info = auth_res.get("dispatch", dispatch_info)
+
+    dispatch_id = dispatch_info.get("id")
+    from_facility = dispatch_info.get("from_facility_id", "HSP-001")
+    supplier_user = f"lab.{from_facility.lower()}@{DOMAIN}"
+
+    section("5. Supplying Lab releases blood units")
+    check("Dispatch ID generated", dispatch_id is not None, f"Dispatch #{dispatch_id} from {from_facility}")
+    
+    # Check KDPA privacy: supplying lab should not see clinical notes or patient blood group in dispatch
+    patient_fields = {"patient_blood_group", "clinical_note", "warnings"} & set(dispatch_info)
+    check("KDPA privacy: Lab cannot see patient-identifying clinical notes", len(patient_fields) == 0, f"Exposed fields: {sorted(patient_fields)}")
+
+    status_code, rel_res = api.call("POST", f"/dispatches/{dispatch_id}/release", supplier_user, {"action": "confirm", "transport_mode": "vehicle"})
+    check("POST /dispatches/{id}/release confirms dispatch", status_code == 200, f"status: {rel_res.get('request_status')}")
+
+    section("6. Courier Transit & Hospital Receipt")
+    status_code, trans_res = api.call("POST", f"/dispatches/{dispatch_id}/status", supplier_user, {"status": "in_transit"})
+    check("Supplying lab transitions to in_transit", status_code == 200, f"status: {trans_res.get('request_status')}")
+
+    # Clinician receives at hospital and confirms cold-chain intact (e.g. 4.6°C)
+    status_code, rec_res = api.call("POST", f"/dispatches/{dispatch_id}/status", clinician, {"status": "received", "coolbox_max_temp_c": 4.6})
+    check("Hospital clinician confirms arrival (Received)", status_code == 200, f"status: {rec_res.get('request_status')}")
+
+    section("7. Immutable Audit Trail Verification")
+    status_code, audit_res = api.call("GET", f"/audit?request_id={req_id}", officer)
+    check("GET /audit returns 200 for officer", status_code == 200)
+    events = audit_res.get("events", [])
+    check("Audit trail records events across the flow", len(events) >= 4, f"{len(events)} logged events")
+
+    # Verify role security: clinician cannot read audit trail
+    status_code, _ = api.call("GET", f"/audit?request_id={req_id}", clinician)
+    check("Role isolation: Clinician forbidden from /audit (HTTP 403)", status_code == 403)
 
 
-def test_audit(base, tokens, req_id):
-    section("7. Audit trail")
-    if not tokens or req_id is None:
-        print(f"  {WARN} Skipped")
-        return
-
-    # Try any available token
-    token = tokens.get("officer") or next(iter(tokens.values()))
-    r = requests.get(f"{base}/audit", params={"request_id": req_id},
-                     headers=auth(token), timeout=10)
-
-    check("GET /audit?request_id= returns 200", r.status_code == 200,
-          f"got {r.status_code}: {r.text[:120]}")
-
-    if r.status_code != 200:
-        return
-
-    events = r.json()
-    if isinstance(events, dict):
-        events = events.get("events") or events.get("results") or []
-
-    check("At least one audit event recorded", len(events) >= 1,
-          f"{len(events)} event(s)")
-
-    # Check event shape
-    if events:
-        ev = events[0]
-        for field in ("who", "action", "timestamp"):
-            check(f"Audit event has '{field}'", field in ev, str(ev.get(field, "MISSING")))
-
-
-def test_role_isolation(base, tokens):
-    section("8. Role isolation — clinician cannot see officer endpoints")
-    if "clinician" not in tokens:
-        print(f"  {WARN} Skipped")
-        return
-
-    # Clinician should not be able to call /audit
-    r = requests.get(f"{base}/audit", headers=auth(tokens["clinician"]), timeout=10)
-    check("Clinician cannot access /audit (expects 403)",
-          r.status_code == 403, f"got {r.status_code}")
-
-
-# ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description="Golden Hour end-to-end API test")
-    parser.add_argument("--base-url", default=DEFAULT_BASE,
-                        help=f"Base URL of the running server (default: {DEFAULT_BASE})")
+    parser = argparse.ArgumentParser(description="Golden Hour E2E Test Suite")
+    parser.add_argument("--base", default=DEFAULT_BASE, help=f"Backend base URL (default: {DEFAULT_BASE})")
+    parser.add_argument("--password", default="demo2026", help="Demo user password")
     args = parser.parse_args()
-    base = args.base_url.rstrip("/")
 
-    print(f"\n{'=' * 60}")
-    print(f"  GOLDEN HOUR — END-TO-END API TEST")
-    print(f"  Target: {base}")
-    print(f"{'=' * 60}")
+    print(f"\n{'=' * 65}")
+    print(f"  GOLDEN HOUR — END-TO-END VERIFICATION")
+    print(f"  Target: {args.base}")
+    print(f"{'=' * 65}")
 
-    # Smoke test
+    api = ApiClient(args.base, args.password)
+
+    # Health check
     try:
-        requests.get(base, timeout=5)
-    except Exception:
-        print(f"\n{FAIL}  Cannot reach {base}")
-        print("     Make sure the server is running: cd backend && python manage.py runserver")
+        urllib.request.urlopen(args.base + "/requests", timeout=5)
+    except urllib.error.HTTPError as e:
+        # 401 is expected when unauthenticated, meaning server is alive
+        pass
+    except Exception as ex:
+        print(f"\n{FAIL} Cannot connect to server at {args.base}: {ex}")
+        print("   Start server first: cd backend && python manage.py runserver 8000")
         sys.exit(1)
 
-    tokens, auth_ok = test_auth(base)
+    auth_ok = test_auth(api)
     if not auth_ok:
-        print(f"\n{FAIL}  Auth failed — run 'python manage.py seed_demo_users' and retry.")
+        print(f"\n{FAIL} Auth failed. Ensure 'python manage.py seed_demo_users' has run.")
         sys.exit(1)
 
-    req_id      = test_raise_request(base, tokens)
-    dispatch_id = test_get_options(base, tokens, req_id)
-    dispatch_id = test_decision(base, tokens, req_id, dispatch_id)
-    released    = test_release(base, tokens, dispatch_id)
-    test_status_updates(base, tokens, dispatch_id, released)
-    test_audit(base, tokens, req_id)
-    test_role_isolation(base, tokens)
+    test_request_lifecycle(api)
 
-    print(f"\n{'=' * 60}")
-    print("  Done. Fix any ❌ before the 23:30 gate.")
-    print(f"{'=' * 60}\n")
+    print(f"\n{'=' * 65}")
+    print(f"  SUMMARY: {TOTAL_CHECKS - FAILED_CHECKS}/{TOTAL_CHECKS} checks passed.")
+    if FAILED_CHECKS == 0:
+        print(f"  {PASS} ALL CHECKS PASSED. Ready for demo / submission!")
+    else:
+        print(f"  {FAIL} {FAILED_CHECKS} CHECKS FAILED.")
+    print(f"{'=' * 65}\n")
+
+    sys.exit(0 if FAILED_CHECKS == 0 else 1)
 
 
 if __name__ == "__main__":

@@ -74,6 +74,9 @@ def _load_model() -> dict:
             if _model_cache is None:   # second check inside the lock
                 with open(MODEL_PATH, "rb") as f:
                     _model_cache = pickle.load(f)
+                # Avoid thread pool spawn overhead in concurrent workers and test runs
+                if "rf" in _model_cache and hasattr(_model_cache["rf"], "n_jobs"):
+                    _model_cache["rf"].n_jobs = 1
                 logger.info(
                     "ETA model loaded — MAE %.1f min, coverage %.1f%%, cap %.0f min",
                     _model_cache["metrics"]["model_mae"],
