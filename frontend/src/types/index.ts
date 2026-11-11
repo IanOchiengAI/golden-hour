@@ -6,6 +6,8 @@ export interface User {
   facility_id?: string
   facility_name?: string
   token: string
+  /** signed in with a test account (enables quick role switching) */
+  demo?: boolean
 }
 
 export type BloodGroup = 'O-' | 'O+' | 'A-' | 'A+' | 'B-' | 'B+' | 'AB-' | 'AB+' | 'unknown'
@@ -41,12 +43,13 @@ export interface EmergencyRequest {
   eta_method?: 'model' | 'fallback'
   created_at: string
   updated_at?: string
-  held_option_id?: number
-  dispatch_id?: number
-  dispatch_status?: string | null
+  held_option_id?: number | null
+  dispatch_id?: number | null
+  dispatch_status?: Dispatch['status'] | null
+  dispatch?: Dispatch | null
   authorisation_route?: 'standing' | 'per_transfer' | ''
+  status_changed_at?: string
   due_at?: string | null
-  decision_due_at?: string
   held_option?: {
     id: number
     rank: number
@@ -84,8 +87,15 @@ export interface OptionsResponse {
   method: 'model' | 'fallback'
   ai_offline: boolean
   data_as_of: string
-  held_option_id: number
+  held_option_id: number | null
   options: DispatchOption[]
+}
+
+/** Response of POST /dispatches/{id}/release and /status. */
+export interface DispatchActionResponse {
+  dispatch: Dispatch
+  request_status: RequestStatus
+  warnings: string[]
 }
 
 export interface Dispatch {
@@ -93,22 +103,18 @@ export interface Dispatch {
   request_id: number
   status: 'AwaitingRelease' | 'Released' | 'Declined' | 'Cancelled' | 'InTransit' | 'Received'
   from_facility_id: string
-  from_facility_name?: string
   to_facility_id: string
   to_facility_name?: string
   component: BloodComponent
   units_requested: number
   unit_ids: string[]
-  blood_groups: string[]
+  blood_groups: (string | null)[]
   urgency: Urgency
-  transport_mode?: 'vehicle' | 'motorbike' | 'public_service_vehicle'
-  released_by?: string
-  released_at?: string
-  decline_reason?: string
-  in_transit_at?: string
-  received_at?: string
-  received_by?: string
-  coolbox_max_temp_c?: number
+  transport_mode?: 'vehicle' | 'motorbike' | 'public_service_vehicle' | ''
+  released_at?: string | null
+  in_transit_at?: string | null
+  received_at?: string | null
+  coolbox_max_temp_c?: number | null
   created_at: string
 }
 
@@ -116,7 +122,7 @@ export interface AuditEvent {
   id?: number
   time: string
   actor: string
-  role: Role
+  role: Role | ''
   action: string
   object: string
   before?: Record<string, unknown> | null
