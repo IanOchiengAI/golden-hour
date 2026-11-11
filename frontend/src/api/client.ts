@@ -1,16 +1,40 @@
-import type { EmergencyRequest, OptionsResponse, Dispatch, AuditEvent, Role } from '../types'
+import type {
+  EmergencyRequest, OptionsResponse, Dispatch, DispatchActionResponse, AuditEvent, Role, RequestStatus,
+} from '../types'
 
-// Demo users seeded in backend
+// Demo users seeded in backend (python manage.py seed_demo_users). All synthetic.
 export const DEMO_CREDENTIALS = {
-  clinician: { username: 'clinician@goldenhour.health', password: 'demo2026', facility_id: 'HSP-002', role: 'clinician' as Role, title: 'Ward Clinician (HSP-002)' },
-  officer: { username: 'officer@goldenhour.health', password: 'demo2026', facility_id: 'RBTC-NBO', role: 'blood_bank_officer' as Role, title: 'Blood Bank Officer (RBTC Nairobi)' },
-  backup_officer: { username: 'backup.officer@goldenhour.health', password: 'demo2026', facility_id: 'RBTC-NBO', role: 'blood_bank_officer' as Role, title: 'Backup Officer (Escalation)' },
-  moh: { username: 'moh@goldenhour.health', password: 'demo2026', facility_id: '', role: 'moh_officer' as Role, title: 'Ministry of Health Authorising Officer' },
-  lab: { username: 'lab@goldenhour.health', password: 'demo2026', facility_id: 'RBTC-NBO', role: 'lab_officer' as Role, title: 'Supplying Lab Officer (RBTC Nairobi)' },
+  clinician: { username: 'clinician@goldenhour.health', password: 'demo2026', role: 'clinician' as Role },
+  officer: { username: 'officer@goldenhour.health', password: 'demo2026', role: 'blood_bank_officer' as Role },
+  backup_officer: { username: 'backup.officer@goldenhour.health', password: 'demo2026', role: 'blood_bank_officer' as Role },
+  moh: { username: 'moh@goldenhour.health', password: 'demo2026', role: 'moh_officer' as Role },
+  lab: { username: 'lab@goldenhour.health', password: 'demo2026', role: 'lab_officer' as Role },
 }
+
+/** Lab officer login for a supplying site, e.g. HSP-001 → lab.hsp-001@goldenhour.health */
+export const labUsername = (facilityId: string) => `lab.${facilityId.toLowerCase()}@goldenhour.health`
+
+/** Turn a DRF error body into one readable line: {"reason": ["A reason is required."]} → "A reason is required." */
+export function errorText(body: unknown, fallback: string): string {
+  if (!body || typeof body !== 'object') return fallback
+  const b = body as Record<string, unknown>
+  if (typeof b.detail === 'string') return b.detail
+  const parts: string[] = []
+  for (const [field, value] of Object.entries(b)) {
+    const msgs = Array.isArray(value) ? value : [value]
+    for (const m of msgs) {
+      if (typeof m === 'string') parts.push(field === 'non_field_errors' ? m : `${field.replace(/_/g, ' ')}: ${m}`)
+    }
+  }
+  return parts.length ? parts.join(' ') : fallback
+}
+
+const listOf = <T,>(res: { results: T[] } | T[]): T[] => (Array.isArray(res) ? res : res.results || [])
 
 class ApiClient {
   private token: string | null = null
+  /** Called when the server rejects the token (expired or revoked). */
+  onUnauthorized: (() => void) | null = null
 
   setToken(token: string | null) {
     this.token = token
@@ -36,24 +60,26 @@ class ApiClient {
       headers.set('Authorization', `Token ${token}`)
     }
 
+    let response: Response
     try {
-      const response = await fetch(path, { ...options, headers })
-      if (!response.ok) {
-        let errorDetail = `Request failed: ${response.status} ${response.statusText}`
-        try {
-          const errJson = await response.json()
-          if (errJson.detail) errorDetail = errJson.detail
-          else if (typeof errJson === 'object') errorDetail = JSON.stringify(errJson)
-        } catch {
-          // ignore json parse error
-        }
-        throw new Error(errorDetail)
-      }
-      return (await response.json()) as T
-    } catch (err: unknown) {
-      console.warn(`API call to ${path} encountered error:`, err)
-      throw err
+      response = await fetch(path, { ...options, headers })
+    } catch {
+      throw new Error('Cannot reach the server. Check the connection.')
     }
+    if (response.status === 401 && path !== '/auth/login' && this.onUnauthorized) {
+      this.onUnauthorized()
+    }
+    if (!response.ok) {
+      let body: unknown = null
+      try {
+        body = await response.json()
+      } catch {
+        // not JSON (e.g. proxy error page)
+      }
+      const fallback = response.status >= 500 ? `Server error (${response.status}).` : `Request failed (${response.status}).`
+      throw new Error(errorText(body, fallback))
+    }
+    return (await response.json()) as T
   }
 
   async login(username: string, password = 'demo2026') {
@@ -87,21 +113,21 @@ class ApiClient {
     return this.request<OptionsResponse>(`/requests/${id}/options`)
   }
 
-  async getRequests(params?: { status?: string; urgency?: string; limit?: number }): Promise<{ results: EmergencyRequest[] } | EmergencyRequest[]> {
+  async getRequests(params?: { status?: RequestStatus[]; urgency?: string; limit?: number }): Promise<EmergencyRequest[]> {
     const query = new URLSearchParams()
-    if (params?.status) query.set('status', params.status)
+    if (params?.status?.length) query.set('status', params.status.join(','))
     if (params?.urgency) query.set('urgency', params.urgency)
     if (params?.limit) query.set('limit', String(params.limit))
     const qs = query.toString() ? `?${query.toString()}` : ''
-    return this.request<{ results: EmergencyRequest[] } | EmergencyRequest[]>(`/requests${qs}`)
+    return listOf(await this.request<{ results: EmergencyRequest[] } | EmergencyRequest[]>(`/requests${qs}`))
   }
 
-  async getDispatches(params?: { status?: string; limit?: number }): Promise<{ results: Dispatch[] } | Dispatch[]> {
+  async getDispatches(params?: { status?: Dispatch['status'][]; limit?: number }): Promise<Dispatch[]> {
     const query = new URLSearchParams()
-    if (params?.status) query.set('status', params.status)
+    if (params?.status?.length) query.set('status', params.status.join(','))
     if (params?.limit) query.set('limit', String(params.limit))
     const qs = query.toString() ? `?${query.toString()}` : ''
-    return this.request<{ results: Dispatch[] } | Dispatch[]>(`/dispatches${qs}`)
+    return listOf(await this.request<{ results: Dispatch[] } | Dispatch[]>(`/dispatches${qs}`))
   }
 
   async getRequest(id: number): Promise<EmergencyRequest> {
@@ -136,8 +162,8 @@ class ApiClient {
     action: 'confirm' | 'decline',
     transportMode?: 'vehicle' | 'motorbike' | 'public_service_vehicle',
     reason?: string
-  ): Promise<Dispatch> {
-    return this.request<Dispatch>(`/dispatches/${dispatchId}/release`, {
+  ): Promise<DispatchActionResponse> {
+    return this.request<DispatchActionResponse>(`/dispatches/${dispatchId}/release`, {
       method: 'POST',
       body: JSON.stringify({ action, transport_mode: transportMode, reason }),
     })
@@ -147,15 +173,15 @@ class ApiClient {
     dispatchId: number,
     status: 'in_transit' | 'received',
     coolboxMaxTempC?: number
-  ): Promise<{ status: string; warning?: string }> {
-    return this.request<{ status: string; warning?: string }>(`/dispatches/${dispatchId}/status`, {
+  ): Promise<DispatchActionResponse> {
+    return this.request<DispatchActionResponse>(`/dispatches/${dispatchId}/status`, {
       method: 'POST',
       body: JSON.stringify({ status, coolbox_max_temp_c: coolboxMaxTempC }),
     })
   }
 
-  async getAudit(requestId: number): Promise<{ request_id: number; events: AuditEvent[] }> {
-    return this.request<{ request_id: number; events: AuditEvent[] }>(`/audit?request_id=${requestId}`)
+  async getAudit(requestId: number): Promise<{ request_id: number; status: RequestStatus; events: AuditEvent[] }> {
+    return this.request<{ request_id: number; status: RequestStatus; events: AuditEvent[] }>(`/audit?request_id=${requestId}`)
   }
 }
 

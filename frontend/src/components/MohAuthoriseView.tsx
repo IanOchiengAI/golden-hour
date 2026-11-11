@@ -1,165 +1,160 @@
 import React, { useState } from 'react'
 import { api } from '../api/client'
-import { Shield, CheckCircle2, XCircle, AlertOctagon, FileText, Check, AlertTriangle } from 'lucide-react'
+import { facilityName } from '../api/facilities'
+import { usePolling, lastDispatchSite, useNow } from '../hooks/usePolling'
+import type { EmergencyRequest } from '../types'
+import {
+  Page, Card, Button, Chip, Notice, Label, Empty, Queue, StatusChip, UrgencyChip, COMPONENT_LABEL, group, etaRange,
+  timeLeft, inputCls,
+} from './ui'
+
+type MohAction = 'approve' | 'reject' | 'stop' | 'review'
+
+// Requests the MoH officer acts on: per-transfer requests waiting for approval, and
+// standing-authorisation requests (stop before release, review afterwards).
+const MOH_STATUSES = ['AwaitingAuthorisation', 'SentToSupplier', 'Dispatched', 'InTransit', 'Received'] as const
+
+export const routeLabel = (route?: string) =>
+  route === 'standing' ? 'Standing authorisation' : route === 'per_transfer' ? 'MoH approval per transfer' : 'Not set yet'
+
+export function allowedActions(r: EmergencyRequest): MohAction[] {
+  if (r.status === 'AwaitingAuthorisation') return ['approve', 'reject']
+  if (r.authorisation_route !== 'standing') return []
+  const canStop = r.status === 'SentToSupplier' && r.dispatch_status === 'AwaitingRelease'
+  return canStop ? ['review', 'stop'] : ['review']
+}
+
+const ACTION_LABEL: Record<MohAction, string> = { approve: 'Approve', reject: 'Reject', stop: 'Stop', review: 'Mark reviewed' }
 
 export const MohAuthoriseView: React.FC = () => {
-  const [requestId, setRequestId] = useState<number>(1042)
-  const [reason, setReason] = useState<string>('Within regional emergency protocol for acute trauma')
+  const [rows, setRows] = useState<EmergencyRequest[]>([])
+  const [loaded, setLoaded] = useState(false)
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [reason, setReason] = useState<string>('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const now = useNow()
 
-  const handleAction = async (action: 'approve' | 'reject' | 'stop' | 'review') => {
+  const load = async () => {
+    try {
+      const list = await api.getRequests({ status: [...MOH_STATUSES], limit: 50 })
+      const relevant = list.filter((r) => allowedActions(r).length > 0)
+      // Waiting for approval first, then standing-route requests.
+      relevant.sort((a, b) => Number(b.status === 'AwaitingAuthorisation') - Number(a.status === 'AwaitingAuthorisation'))
+      setRows(relevant)
+      setSelectedId((cur) => (cur && relevant.some((r) => r.id === cur) ? cur : relevant[0]?.id ?? null))
+    } catch (err: unknown) {
+      setMsg({ type: 'error', text: `Could not load the queue: ${err instanceof Error ? err.message : String(err)}` })
+    } finally {
+      setLoaded(true)
+    }
+  }
+  usePolling(load, 10000)
+
+  const selected = rows.find((r) => r.id === selectedId) || null
+
+  const handleAction = async (action: MohAction) => {
+    if (!selected) return
+    if ((action === 'reject' || action === 'stop') && reason.trim().length < 3) {
+      setMsg({ type: 'error', text: 'A reason (at least 3 characters) is required to reject or stop.' })
+      return
+    }
     setIsSubmitting(true)
     setMsg(null)
     try {
-      await api.submitAuthorisation(requestId, action, reason)
-      setMsg({
-        type: 'success',
-        text: `MoH Action '${action.toUpperCase()}' recorded in national blood system audit log.`,
-      })
+      const res = await api.submitAuthorisation(selected.id, action, reason)
+      lastDispatchSite.set(res.dispatch?.from_facility_id)
+      const text = {
+        approve: `Request #${res.id} approved and sent to ${facilityName(res.dispatch?.from_facility_id)}.`,
+        reject: `Request #${res.id} not approved. Units released.`,
+        stop: `Request #${res.id} stopped before release. Units released.`,
+        review: `Request #${res.id} reviewed.`,
+      }[action]
+      setMsg({ type: 'success', text })
+      setReason('')
+      await load()
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      setMsg({
-        type: 'error',
-        text: `Authorisation refused: ${errMsg}`,
-      })
+      setMsg({ type: 'error', text: `Not recorded: ${err instanceof Error ? err.message : String(err)}` })
+      await load()
     } finally {
       setIsSubmitting(false)
     }
   }
 
+  const actions = selected ? allowedActions(selected) : []
+  const left = selected?.status === 'AwaitingAuthorisation' ? timeLeft(selected.due_at, now) : null
+  const site = selected?.held_option
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-      {/* MoH Header */}
-      <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 text-blue-400 text-xs font-semibold uppercase tracking-wider">
-            <Shield className="w-4 h-4" />
-            Ministry of Health Regional Authority
-          </div>
-          <h2 className="text-xl font-bold text-white mt-1">Inter-Facility Blood Movement Authorisation</h2>
-          <p className="text-sm text-slate-400 mt-0.5">
-            Tiered authorisation governance: Standing emergency waiver applies to life-threatening cases; MoH sign-off for urgent/routine cases.
-          </p>
-        </div>
-
-        <div className="bg-slate-950 border border-slate-800 px-3.5 py-2 rounded-xl text-xs">
-          <div className="text-slate-500 font-semibold uppercase text-[10px]">Active Config (kenya.yaml)</div>
-          <div className="text-blue-300 font-bold font-mono mt-0.5">emergency_authorisation: standing</div>
-        </div>
-      </div>
-
+    <Page title="Authorise transfers" wide>
       {msg && (
-        <div
-          className={`p-3.5 rounded-xl text-xs flex items-center gap-2 ${
-            msg.type === 'success'
-              ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-200'
-              : 'bg-rose-950/60 border border-rose-800 text-rose-200'
-          }`}
-        >
-          {msg.type === 'success' ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-          ) : (
-            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-          )}
-          <span>{msg.text}</span>
-        </div>
+        <Notice tone={msg.type === 'success' ? 'ok' : 'error'} onClose={() => setMsg(null)}>
+          {msg.text}
+        </Notice>
       )}
 
-      {/* Authorisation Action Panel */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">Authorize or Stop Transfer</h3>
+      <div className="grid grid-cols-1 lg:grid-cols-[18rem_1fr] gap-4 items-start">
+        <Queue
+          title="To approve or review"
+          items={rows}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          loaded={loaded}
+          empty="Nothing waiting."
+          row={(r) => ({
+            main: `#${r.id} · ${group(r.patient_blood_group)} · ${r.units_requested} × ${COMPONENT_LABEL[r.component] || r.component}`,
+            chips: r.status === 'AwaitingAuthorisation' ? <Chip tone="amber">Approve</Chip> : <Chip>Standing</Chip>,
+          })}
+        />
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-              Target Request ID
-            </label>
-            <input
-              type="number"
-              value={requestId}
-              onChange={(e) => setRequestId(parseInt(e.target.value) || 0)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white font-mono text-sm focus:outline-none focus:border-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-              Authorisation Note / Regulatory Justification
-            </label>
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={3}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-white text-xs focus:outline-none focus:border-blue-500"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 pt-2">
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={() => handleAction('approve')}
-              className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all"
-            >
-              <Check className="w-4 h-4" />
-              Approve Dispatch
-            </button>
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={() => handleAction('reject')}
-              className="bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all"
-            >
-              <XCircle className="w-4 h-4" />
-              Reject &amp; Cancel
-            </button>
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={() => handleAction('stop')}
-              className="bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/40 font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all"
-            >
-              <AlertOctagon className="w-4 h-4" />
-              Emergency Stop
-            </button>
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={() => handleAction('review')}
-              className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all"
-            >
-              <FileText className="w-4 h-4" />
-              Audit Review (Post-Hoc)
-            </button>
-          </div>
-        </div>
-
-        {/* Regulatory Governance Policy details */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">Kenya National Blood Policy Rule</h3>
-          <div className="space-y-3 text-xs text-slate-300">
-            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-              <strong className="text-blue-400 block mb-1">Tier 1: Life-Threatening (Standing Authorization)</strong>
-              <span>
-                To ensure transfusion within the physiological Golden Hour (&lt;60 min), red cell dispatches for trauma and post-partum haemorrhage proceed under standing MoH regional authorization without awaiting individual telephone sign-off.
+        {!selected ? (
+          loaded && <Empty>Nothing to authorise.</Empty>
+        ) : (
+          <Card className="space-y-3">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="text-3xl font-semibold">{group(selected.patient_blood_group)}</span>
+              <span className="text-base">
+                {selected.units_requested} × {COMPONENT_LABEL[selected.component] || selected.component}
               </span>
+              <UrgencyChip urgency={selected.urgency} />
+              <StatusChip status={selected.status} />
+              {left && <Chip tone={left.tone}>{left.text}</Chip>}
             </div>
-            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-              <strong className="text-amber-400 block mb-1">Tier 2: Urgent Dispatches (&lt;180 min)</strong>
-              <span>
-                Requires active MoH or backup blood transfusion coordinator authorization. If unanswered within 5 minutes, escalated automatically.
-              </span>
+            <dl className="grid grid-cols-[6rem_1fr] gap-y-1 text-sm">
+              <dt className="text-slate-500">Route</dt>
+              <dd>{routeLabel(selected.authorisation_route)}</dd>
+              <dt className="text-slate-500">From</dt>
+              <dd>{site ? site.facility_name : '—'}</dd>
+              <dt className="text-slate-500">To</dt>
+              <dd>{facilityName(selected.requesting_facility_id)}</dd>
+              {site && (
+                <>
+                  <dt className="text-slate-500">Arrives in</dt>
+                  <dd className="tabular-nums">{etaRange(site.eta.low_min, site.eta.high_min)}</dd>
+                </>
+              )}
+            </dl>
+            <div>
+              <Label htmlFor="moh_reason">Reason {actions.includes('reject') || actions.includes('stop') ? '(required to reject or stop)' : '(optional)'}</Label>
+              <textarea id="moh_reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className={inputCls} />
             </div>
-            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-              <strong className="text-emerald-400 block mb-1">Regulatory Override Rights</strong>
-              <span>
-                The MoH authorising officer maintains veto authority to issue an &ldquo;Emergency Stop&rdquo; before blood physical departure from the supplying facility.
-              </span>
+            <div className="flex flex-wrap gap-2">
+              {actions.map((a, i) => (
+                <Button
+                  key={a}
+                  kind={i === 0 ? 'primary' : 'secondary'}
+                  big
+                  disabled={isSubmitting}
+                  onClick={() => handleAction(a)}
+                  className={i === 0 ? 'flex-1 sm:flex-none sm:min-w-40' : ''}
+                >
+                  {ACTION_LABEL[a]}
+                </Button>
+              ))}
             </div>
-          </div>
-        </div>
+          </Card>
+        )}
       </div>
-    </div>
+    </Page>
   )
 }
