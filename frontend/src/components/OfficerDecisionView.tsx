@@ -102,75 +102,14 @@ export const OfficerDecisionView: React.FC<{ selectedRequestId?: number }> = ({
   const loadOptions = async (reqId: number) => {
     setIsLoading(true)
     setError(null)
+    setOptionsData(null)
     try {
       const res = await api.getRequestOptions(reqId)
       setOptionsData(res)
       setSelectedOptionId(res.held_option_id || res.options[0]?.id || null)
-    } catch {
-      console.warn('Real options API unavailable, using simulated ranked options with honest uncertainty bounds')
-      const simulated: OptionsResponse = {
-        request: requests.find((r) => r.id === reqId) || {
-          id: reqId,
-          requesting_facility_id: 'HSP-002',
-          patient_blood_group: 'O+',
-          component: 'RBC',
-          units_requested: 2,
-          urgency: 'life_threatening',
-          status: 'AwaitingDecision',
-          compatible_groups: ['O+', 'O-'],
-          created_at: new Date().toISOString(),
-        },
-        method: 'model',
-        ai_offline: false,
-        data_as_of: '2026-10-31',
-        held_option_id: 1,
-        options: [
-          {
-            id: 1,
-            rank: 1,
-            facility_id: 'RBTC-KIS',
-            facility_name: 'Kisumu Regional Blood Transfusion Centre',
-            eta: { low_min: 44.5, mid_min: 49.8, high_min: 55.2 },
-            method: 'model',
-            reason: 'ETA ~50 min (45–55 min range) · 48 km paved highway · 6 unit(s) O+ available · earliest expiry 2026-11-28 · grid backup active',
-            units_available: 6,
-            is_partial: false,
-            unit_ids: ['U2610-KIS-092411-RBC', 'U2610-KIS-092412-RBC'],
-            blood_groups: ['O+', 'O+'],
-            is_held: true,
-          },
-          {
-            id: 2,
-            rank: 2,
-            facility_id: 'HSP-004',
-            facility_name: 'Kisii Teaching & Referral Hospital',
-            eta: { low_min: 68.0, mid_min: 78.5, high_min: 89.0 },
-            method: 'model',
-            reason: 'ETA ~79 min (68–89 min range) · 82 km mixed road · 4 unit(s) O+ available · earliest expiry 2026-11-20',
-            units_available: 4,
-            is_partial: false,
-            unit_ids: ['U2610-KSI-041832-RBC', 'U2610-KSI-041833-RBC'],
-            blood_groups: ['O+', 'O+'],
-            is_held: false,
-          },
-          {
-            id: 3,
-            rank: 3,
-            facility_id: 'RBTC-ELD',
-            facility_name: 'Eldoret Regional Blood Transfusion Centre',
-            eta: { low_min: 85.0, mid_min: 96.0, high_min: 108.5 },
-            method: 'model',
-            reason: 'ETA ~96 min (85–109 min range) · 95 km hilly terrain · 12 unit(s) O+ available · reserve hub',
-            units_available: 12,
-            is_partial: false,
-            unit_ids: ['U2610-ELD-120045-RBC', 'U2610-ELD-120046-RBC'],
-            blood_groups: ['O+', 'O+'],
-            is_held: false,
-          },
-        ],
-      }
-      setOptionsData(simulated)
-      setSelectedOptionId(1)
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      setError(`Failed to fetch dispatch options for Request #${reqId}: ${errMsg}`)
     } finally {
       setIsLoading(false)
     }
@@ -337,9 +276,25 @@ export const OfficerDecisionView: React.FC<{ selectedRequestId?: number }> = ({
             <span>Ranked Dispatch Options (Auto-Held Best Site First)</span>
           </h3>
           <span className="text-xs text-slate-400">
-            Top choice pre-selected. Click another option to Change.
+            Top choice pre-selected. Click another option to Change and accept.
           </span>
         </div>
+
+        {error && (
+          <div className="bg-rose-950/60 border border-rose-800 rounded-2xl p-6 text-center space-y-3">
+            <AlertTriangle className="w-8 h-8 text-rose-400 mx-auto" />
+            <p className="text-sm text-rose-200">{error}</p>
+            {activeReqId && (
+              <button
+                onClick={() => loadOptions(activeReqId)}
+                className="bg-slate-800 hover:bg-slate-700 text-white text-xs px-4 py-2 rounded-lg font-semibold inline-flex items-center gap-1.5 transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Retry Fetching Options
+              </button>
+            )}
+          </div>
+        )}
 
         {isLoading ? (
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-400">
@@ -493,7 +448,7 @@ export const OfficerDecisionView: React.FC<{ selectedRequestId?: number }> = ({
                 className="bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-600/40 px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all"
               >
                 <ArrowRight className="w-4 h-4 text-amber-400" />
-                Change to Alternative Site
+                Change and accept
               </button>
 
               {/* Accept */}

@@ -1,63 +1,50 @@
 import React, { useState } from 'react'
 import type { Dispatch } from '../types'
 import { api } from '../api/client'
+import { useAuth } from '../context/AuthContext'
 import { Truck, CheckCircle2, XCircle, ShieldCheck, Lock, Navigation } from 'lucide-react'
 
 export const LabDispatchView: React.FC = () => {
+  const { user, loginWithFacility } = useAuth()
   const [dispatches, setDispatches] = useState<Dispatch[]>([])
   const [_isLoading, setIsLoading] = useState(false)
+  const [selectedStation, setSelectedStation] = useState<string>(user?.facility_id || 'RBTC-NBO')
 
-  // Load real dispatches from backend on mount
+  // Top supplying facilities
+  const stations = [
+    { id: 'RBTC-NBO', name: 'National Blood Centre (Nairobi)' },
+    { id: 'HSP-001', name: 'National Referral Hospital (HSP-001)' },
+    { id: 'RBTC-KIS', name: 'Kisumu Regional Blood Centre' },
+    { id: 'RBTC-ELD', name: 'Eldoret Regional Blood Centre' },
+    { id: 'RBTC-MBS', name: 'Mombasa Regional Blood Centre' },
+    { id: 'RBTC-NKR', name: 'Nakuru Regional Blood Centre' },
+  ]
+
+  // Load real dispatches from backend on mount or station change
   React.useEffect(() => {
     loadDispatches()
-  }, [])
+  }, [user?.facility_id])
+
+  const handleStationSwitch = async (siteId: string) => {
+    setSelectedStation(siteId)
+    try {
+      await loginWithFacility(siteId)
+    } catch {
+      // station switch error handled via state
+    }
+  }
 
   const loadDispatches = async () => {
     setIsLoading(true)
+    setErrorMsg(null)
     try {
       const res = await api.getDispatches({ status: 'AwaitingRelease,Released,InTransit' })
       const list = Array.isArray(res) ? res : res.results || []
-      if (list.length > 0) {
-        setDispatches(list)
-      } else {
-        // Fallback demo sample if lab queue is currently empty
-        setDispatches([
-          {
-            id: 501,
-            request_id: 1042,
-            status: 'AwaitingRelease',
-            from_facility_id: 'RBTC-KIS',
-            from_facility_name: 'Kisumu Regional Blood Transfusion Centre',
-            to_facility_id: 'HSP-002',
-            to_facility_name: 'Kakamega County Referral Hospital',
-            component: 'RBC',
-            units_requested: 2,
-            unit_ids: ['U2610-KIS-092411-RBC', 'U2610-KIS-092412-RBC'],
-            blood_groups: ['O+', 'O+'],
-            urgency: 'life_threatening',
-            created_at: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-          },
-        ])
-      }
-    } catch {
-      // offline fallback
-      setDispatches([
-        {
-          id: 501,
-          request_id: 1042,
-          status: 'AwaitingRelease',
-          from_facility_id: 'RBTC-KIS',
-          from_facility_name: 'Kisumu Regional Blood Transfusion Centre',
-          to_facility_id: 'HSP-002',
-          to_facility_name: 'Kakamega County Referral Hospital',
-          component: 'RBC',
-          units_requested: 2,
-          unit_ids: ['U2610-KIS-092411-RBC', 'U2610-KIS-092412-RBC'],
-          blood_groups: ['O+', 'O+'],
-          urgency: 'life_threatening',
-          created_at: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-        },
-      ])
+      setDispatches(list)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setErrorMsg(`Failed to load dispatches: ${msg}`)
+      setDispatches([])
     } finally {
       setIsLoading(false)
     }
@@ -137,6 +124,22 @@ export const LabDispatchView: React.FC = () => {
           <p className="text-sm text-slate-400 mt-0.5">
             Physical packaging, barcode verification (ISBT-128), and courier handoff.
           </p>
+        </div>
+
+        {/* Supplying Station Selector */}
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-slate-400 font-medium">Logged in station:</label>
+          <select
+            value={selectedStation}
+            onChange={(e) => handleStationSwitch(e.target.value)}
+            className="bg-slate-950 border border-slate-800 text-white rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-emerald-500"
+          >
+            {stations.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.id} — {s.name}
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* KDPA Supplier-Safe Privacy Badge */}

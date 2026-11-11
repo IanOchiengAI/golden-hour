@@ -17,11 +17,11 @@ export const MohAuthoriseView: React.FC = () => {
         type: 'success',
         text: `MoH Action '${action.toUpperCase()}' recorded in national blood system audit log.`,
       })
-    } catch {
-      // Simulate success
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err)
       setMsg({
-        type: 'success',
-        text: `MoH Action '${action.toUpperCase()}' recorded in national blood system audit log.`,
+        type: 'error',
+        text: `Authorisation refused: ${errMsg}`,
       })
     } finally {
       setIsSubmitting(false)
