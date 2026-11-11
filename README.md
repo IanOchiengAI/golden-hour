@@ -174,7 +174,7 @@ python backend/scripts/try_flow.py --urgency life_threatening
 
 | Name | Role | Country | Presenting Friday |
 |---|---|---|---|
-| **Ian Ochieng** | Team Lead · AI & Algorithm Architect | Kenya | In Person (Nairobi) |
+| **Ian Ochieng** | AI & Algorithm Architect | Kenya | In Person (Nairobi) |
 | **Joronimo Amanya** | Frontend Lead · Mobile PWA & UI/UX | Uganda | Online |
 | **Roland Sankara** | Backend Lead · Django API & Security | Uganda | Online |
 | **Daniel Bitengo** | Architecture, Offline Sync & QA Lead | Kenya | In Person (Nairobi) |
