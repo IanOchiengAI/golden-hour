@@ -1,256 +1,242 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" width="100%" height="100%">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" font-family="'Segoe UI', Arial, Helvetica, sans-serif">
+  <title>Golden Hour architecture</title>
+  <desc>Top: the prototype's parts and data flow. Bottom: where the prototype sits in a wider blood bank information system. Solid is built, dashed is future.</desc>
   <defs>
-    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#090d16" />
-      <stop offset="100%" stop-color="#0f172a" />
-    </linearGradient>
-    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#1e293b" />
-      <stop offset="100%" stop-color="#0f172a" />
-    </linearGradient>
-    <linearGradient id="accentRed" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#e11d48" />
-      <stop offset="100%" stop-color="#be123c" />
-    </linearGradient>
-    <linearGradient id="accentBlue" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#0284c7" />
-      <stop offset="100%" stop-color="#0369a1" />
-    </linearGradient>
-    <linearGradient id="accentAmber" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#d97706" />
-      <stop offset="100%" stop-color="#b45309" />
-    </linearGradient>
-    <linearGradient id="accentEmerald" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#059669" />
-      <stop offset="100%" stop-color="#047857" />
-    </linearGradient>
-    <filter id="shadow" x="-5%" y="-5%" width="110%" height="115%" filterUnits="userSpaceOnUse">
-      <feGaussianBlur stdDeviation="6" result="blur" />
-      <feOffset dx="0" dy="4" />
-      <feComponentTransfer><feFuncA type="linear" slope="0.4" /></feComponentTransfer>
-      <feMerge>
-        <feMergeNode />
-        <feMergeNode in="SourceGraphic" />
-      </feMerge>
-    </filter>
-  </defs>
-
-  <!-- Background -->
-  <rect width="1200" height="780" fill="url(#bgGradient)" />
-
-  <!-- Grid decoration lines -->
-  <g opacity="0.07" stroke="#94a3b8" stroke-width="1">
-    <line x1="50" y1="0" x2="50" y2="780" />
-    <line x1="250" y1="0" x2="250" y2="780" />
-    <line x1="450" y1="0" x2="450" y2="780" />
-    <line x1="650" y1="0" x2="650" y2="780" />
-    <line x1="850" y1="0" x2="850" y2="780" />
-    <line x1="1050" y1="0" x2="1050" y2="780" />
-    <line x1="0" y1="130" x2="1200" y2="130" />
-    <line x1="0" y1="330" x2="1200" y2="330" />
-    <line x1="0" y1="530" x2="1200" y2="530" />
-    <line x1="0" y1="730" x2="1200" y2="730" />
-  </g>
-
-  <!-- Header -->
-  <g transform="translate(60, 45)">
-    <rect x="0" y="0" width="36" height="36" rx="8" fill="#e11d48" />
-    <path d="M18 10 v16 M10 18 h16" stroke="#ffffff" stroke-width="4" stroke-linecap="round" />
-    <text x="48" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="24" font-weight="800" fill="#f8fafc" letter-spacing="-0.5">GOLDEN HOUR</text>
-    <text x="215" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="500" fill="#94a3b8">| System Architecture &amp; Data Flow</text>
-    <text x="48" y="40" font-family="monospace" font-size="11" fill="#e2e8f0" opacity="0.6">Terumo BCT Africa Hackathon 2026 · Challenge: Emergency Request &amp; Intelligent Dispatch</text>
-  </g>
-
-  <!-- Layer 1: FRONTEND / CLIENTS (Left Column) -->
-  <g transform="translate(60, 110)">
-    <rect width="280" height="610" rx="12" fill="#0f172a" stroke="#334155" stroke-width="1.5" />
-    <rect width="280" height="40" rx="12" fill="#1e293b" />
-    <rect y="28" width="280" height="12" fill="#1e293b" />
-    <text x="16" y="25" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="700" fill="#38bdf8" letter-spacing="0.5">1. ACTORS &amp; MOBILE PWA CLIENTS</text>
-
-    <!-- Clinician Card -->
-    <g transform="translate(15, 55)">
-      <rect width="250" height="115" rx="8" fill="url(#cardGrad)" stroke="#475569" stroke-width="1" filter="url(#shadow)" />
-      <circle cx="25" cy="25" r="10" fill="#e11d48" opacity="0.2" />
-      <text x="25" y="29" font-family="sans-serif" font-size="12" font-weight="bold" fill="#f43f5e" text-anchor="middle">🏥</text>
-      <text x="44" y="28" font-family="sans-serif" font-size="13" font-weight="700" fill="#f1f5f9">Emergency Clinician</text>
-      <text x="15" y="52" font-family="sans-serif" font-size="11" fill="#94a3b8">POST /requests (Urgent/PPH)</text>
-      <text x="15" y="70" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Rapid Presets (PPH, Trauma)</text>
-      <text x="15" y="86" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Universal O- unknown safety</text>
-      <text x="15" y="102" font-family="sans-serif" font-size="10.5" fill="#38bdf8">• Offline Outbox (Idempotent 2G)</text>
-    </g>
-
-    <!-- Officer Card -->
-    <g transform="translate(15, 185)">
-      <rect width="250" height="125" rx="8" fill="url(#cardGrad)" stroke="#475569" stroke-width="1" filter="url(#shadow)" />
-      <circle cx="25" cy="25" r="10" fill="#0284c7" opacity="0.2" />
-      <text x="25" y="29" font-family="sans-serif" font-size="12" font-weight="bold" fill="#38bdf8" text-anchor="middle">⚖️</text>
-      <text x="44" y="28" font-family="sans-serif" font-size="13" font-weight="700" fill="#f1f5f9">Blood Bank Officer</text>
-      <text x="15" y="52" font-family="sans-serif" font-size="11" fill="#94a3b8">GET /options · POST /decision</text>
-      <text x="15" y="70" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Ranked Candidate Options</text>
-      <text x="15" y="86" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Honest ETA ± range display</text>
-      <text x="15" y="102" font-family="sans-serif" font-size="10.5" fill="#f59e0b">• Mandatory Accept/Change/Reject</text>
-      <text x="15" y="118" font-family="sans-serif" font-size="10.5" fill="#94a3b8">• 5-Min Escalation Countdown</text>
-    </g>
-
-    <!-- MoH Card -->
-    <g transform="translate(15, 325)">
-      <rect width="250" height="110" rx="8" fill="url(#cardGrad)" stroke="#475569" stroke-width="1" filter="url(#shadow)" />
-      <circle cx="25" cy="25" r="10" fill="#d97706" opacity="0.2" />
-      <text x="25" y="29" font-family="sans-serif" font-size="12" font-weight="bold" fill="#fbbf24" text-anchor="middle">🏛️</text>
-      <text x="44" y="28" font-family="sans-serif" font-size="13" font-weight="700" fill="#f1f5f9">Ministry of Health (MoH)</text>
-      <text x="15" y="52" font-family="sans-serif" font-size="11" fill="#94a3b8">POST /requests/{id}/authorise</text>
-      <text x="15" y="70" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Standing Emergency Oversight</text>
-      <text x="15" y="86" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Urgent Sign-off Gate</text>
-      <text x="15" y="102" font-family="sans-serif" font-size="10.5" fill="#ef4444">• Regional Emergency Stop Veto</text>
-    </g>
-
-    <!-- Lab Card -->
-    <g transform="translate(15, 450)">
-      <rect width="250" height="145" rx="8" fill="url(#cardGrad)" stroke="#475569" stroke-width="1" filter="url(#shadow)" />
-      <circle cx="25" cy="25" r="10" fill="#059669" opacity="0.2" />
-      <text x="25" y="29" font-family="sans-serif" font-size="12" font-weight="bold" fill="#34d399" text-anchor="middle">🧪</text>
-      <text x="44" y="28" font-family="sans-serif" font-size="13" font-weight="700" fill="#f1f5f9">Supplying Lab &amp; Transit</text>
-      <text x="15" y="52" font-family="sans-serif" font-size="11" fill="#94a3b8">POST /dispatches/{id}/release</text>
-      <text x="15" y="70" font-family="sans-serif" font-size="10.5" fill="#34d399">• KDPA Masking (No patient data)</text>
-      <text x="15" y="86" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Transport Mode (Boda/Vehicle)</text>
-      <text x="15" y="102" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Release Confirm / Decline fallback</text>
-      <text x="15" y="118" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• In-Transit &amp; Cold Box Temp log</text>
-      <text x="15" y="134" font-family="sans-serif" font-size="10.5" fill="#f43f5e">• Excursion Quarantine Alert (&gt;10°C)</text>
-    </g>
-  </g>
-
-  <!-- Flow Arrows 1 -> 2 -->
-  <g stroke="#38bdf8" stroke-width="2" fill="none" opacity="0.7">
-    <path d="M340 170 L395 170" marker-end="url(#arrow)" />
-    <path d="M340 250 L395 250" marker-end="url(#arrow)" />
-    <path d="M340 380 L395 380" marker-end="url(#arrow)" />
-    <path d="M340 520 L395 520" marker-end="url(#arrow)" />
-  </g>
-
-  <!-- Layer 2: BACKEND CORE & SECURITY (Middle Column) -->
-  <g transform="translate(400, 110)">
-    <rect width="400" height="610" rx="12" fill="#0f172a" stroke="#0284c7" stroke-width="1.5" />
-    <rect width="400" height="40" rx="12" fill="#0369a1" />
-    <rect y="28" width="400" height="12" fill="#0369a1" />
-    <text x="16" y="25" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="700" fill="#ffffff" letter-spacing="0.5">2. DJANGO 5.2 + REST API &amp; DISPATCH ENGINE</text>
-
-    <!-- Security & Auth Box -->
-    <g transform="translate(15, 55)">
-      <rect width="370" height="90" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1" />
-      <text x="15" y="24" font-family="sans-serif" font-size="12" font-weight="700" fill="#38bdf8">🛡️ RBAC Security &amp; Token Auth</text>
-      <text x="15" y="44" font-family="sans-serif" font-size="11" fill="#cbd5e1">• Deny-by-default role permissions (Clinician, Officer, MoH, Lab)</text>
-      <text x="15" y="60" font-family="sans-serif" font-size="11" fill="#cbd5e1">• Rate limiting &amp; Throttle (10 req/min) · Max 10 open per facility</text>
-      <text x="15" y="76" font-family="sans-serif" font-size="11" fill="#cbd5e1">• Token expiry (12 hr TTL) · CORS configured · Audit log on denied</text>
-    </g>
-
-    <!-- Biological Rules Engine -->
-    <g transform="translate(15, 155)">
-      <rect width="370" height="105" rx="8" fill="#1e293b" stroke="#e11d48" stroke-width="1" />
-      <text x="15" y="24" font-family="sans-serif" font-size="12" font-weight="700" fill="#f43f5e">🩸 Biological Rules &amp; Cold-Chain Filter</text>
-      <text x="15" y="44" font-family="sans-serif" font-size="11" fill="#cbd5e1">• ABO/RhD matrix (RBC universal O-, reversed for FFP, strict PLT)</text>
-      <text x="15" y="60" font-family="sans-serif" font-size="11" fill="#cbd5e1">• 100% Excursion isolation: blocks 2,119 compromised units</text>
-      <text x="15" y="76" font-family="sans-serif" font-size="11" fill="#cbd5e1">• Shelf-life filter: expiry_date &gt; data_as_of (prevents 23% waste)</text>
-      <text x="15" y="92" font-family="sans-serif" font-size="11" fill="#cbd5e1">• Tested non-reactive screening required before release</text>
-    </g>
-
-    <!-- Scoring & Matching Engine -->
-    <g transform="translate(15, 270)">
-      <rect width="370" height="135" rx="8" fill="#1e293b" stroke="#fbbf24" stroke-width="1" />
-      <text x="15" y="24" font-family="sans-serif" font-size="12" font-weight="700" fill="#fbbf24">⚡ Multi-Criteria Dispatch Optimizer</text>
-      <text x="15" y="44" font-family="sans-serif" font-size="11" font-weight="600" fill="#f1f5f9">Cost = 0.50·ETA_norm + 0.30·Scarcity + 0.20·Expiry</text>
-      <text x="15" y="64" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• 50% Travel ETA: Prioritizes fastest verified arrival</text>
-      <text x="15" y="80" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• 30% Scarcity Penalty: Protects rare O- reserves (7 in Kenya)</text>
-      <text x="15" y="96" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• 20% FEFO Urgency: First-Expired First-Out curbs spoilage</text>
-      <text x="15" y="112" font-family="sans-serif" font-size="10.5" fill="#38bdf8">• Bipartite linear sum assignment matching across 47 facilities</text>
-      <text x="15" y="128" font-family="sans-serif" font-size="10.5" fill="#94a3b8">• Instant DB hold lock with 30-min auto-release expiry</text>
-    </g>
-
-    <!-- State Machine & Audit -->
-    <g transform="translate(15, 415)">
-      <rect width="370" height="100" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1" />
-      <text x="15" y="24" font-family="sans-serif" font-size="12" font-weight="700" fill="#38bdf8">📋 Lifecycle State Machine &amp; Audit Trail</text>
-      <text x="15" y="44" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">Raised → Matching → UnitsHeld → AwaitingDecision →</text>
-      <text x="15" y="60" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">SentToSupplier → Dispatched → InTransit → Received</text>
-      <text x="15" y="76" font-family="sans-serif" font-size="10.5" fill="#34d399">• Immutable AuditEvent: who · role · action · before · after · reason</text>
-      <text x="15" y="92" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Supplier decline gracefully shifts hold to rank #2 candidate</text>
-    </g>
-
-    <!-- Config-Driven Extensibility -->
-    <g transform="translate(15, 525)">
-      <rect width="370" height="70" rx="8" fill="#1e293b" stroke="#10b981" stroke-width="1" />
-      <text x="15" y="22" font-family="sans-serif" font-size="12" font-weight="700" fill="#34d399">🌍 Multi-Country YAML Config (kenya.yaml)</text>
-      <text x="15" y="40" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Escalation thresholds (5m) · Hold TTL (30m) · Urgent targets</text>
-      <text x="15" y="56" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Switchable with COUNTRY_CONFIG env var for regional scaling</text>
-    </g>
-  </g>
-
-  <!-- Flow Arrows 2 -> 3 -->
-  <g stroke="#10b981" stroke-width="2" fill="none" opacity="0.7">
-    <path d="M800 240 L855 240" marker-end="url(#arrow)" />
-    <path d="M800 480 L855 480" marker-end="url(#arrow)" />
-  </g>
-
-  <!-- Layer 3: ML & DATA STORES (Right Column) -->
-  <g transform="translate(860, 110)">
-    <rect width="280" height="610" rx="12" fill="#0f172a" stroke="#10b981" stroke-width="1.5" />
-    <rect width="280" height="40" rx="12" fill="#047857" />
-    <rect y="28" width="280" height="12" fill="#047857" />
-    <text x="16" y="25" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="700" fill="#ffffff" letter-spacing="0.5">3. AI MODEL &amp; DATA PLATFORM</text>
-
-    <!-- Random Forest Regressor -->
-    <g transform="translate(15, 55)">
-      <rect width="250" height="240" rx="8" fill="url(#cardGrad)" stroke="#10b981" stroke-width="1" filter="url(#shadow)" />
-      <text x="15" y="24" font-family="sans-serif" font-size="13" font-weight="700" fill="#34d399">🤖 Calibrated ETA Model</text>
-      <text x="15" y="44" font-family="sans-serif" font-size="11" fill="#94a3b8">Random Forest (200 trees, n_jobs=1)</text>
-      <text x="15" y="64" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Trained on 34,135 transfers</text>
-      <text x="15" y="80" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Emergency weighted (3× / 2×)</text>
-      
-      <rect x="15" y="92" width="220" height="62" rx="4" fill="#022c22" stroke="#059669" stroke-width="0.8" />
-      <text x="25" y="108" font-family="sans-serif" font-size="10.5" font-weight="bold" fill="#6ee7b7">Baseline vs Model Performance:</text>
-      <text x="25" y="124" font-family="sans-serif" font-size="10" fill="#a7f3d0">Table: 41.5 min → ML: 30.8 min MAE</text>
-      <text x="25" y="140" font-family="sans-serif" font-size="10" font-weight="bold" fill="#34d399">25.8% Improvement · 91.1% Coverage</text>
-
-      <text x="15" y="172" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Conformal prediction intervals</text>
-      <text x="15" y="188" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Features: road_km, road_quality,</text>
-      <text x="15" y="204" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">  hour_of_day, mode, connectivity</text>
-      <text x="15" y="222" font-family="sans-serif" font-size="10.5" fill="#f59e0b">• Auto-fallback to table ±20%</text>
-    </g>
-
-    <!-- Data Stores -->
-    <g transform="translate(15, 305)">
-      <rect width="250" height="150" rx="8" fill="url(#cardGrad)" stroke="#475569" stroke-width="1" filter="url(#shadow)" />
-      <text x="15" y="24" font-family="sans-serif" font-size="13" font-weight="700" fill="#f1f5f9">🗄️ Unified Data Layer</text>
-      <text x="15" y="46" font-family="sans-serif" font-size="11" fill="#94a3b8">SQLite / PostgreSQL target</text>
-      <text x="15" y="66" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• blood_system.sqlite (53MB)</text>
-      <text x="15" y="82" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• 47 facilities with grid &amp; power risk</text>
-      <text x="15" y="98" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• 49,426 blood units tracked</text>
-      <text x="15" y="114" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• 2,162 inter-facility route pairs</text>
-      <text x="15" y="130" font-family="sans-serif" font-size="10.5" fill="#38bdf8">• App DB: Holds, Requests, Audit</text>
-    </g>
-
-    <!-- Standards & KDPA Box -->
-    <g transform="translate(15, 465)">
-      <rect width="250" height="130" rx="8" fill="url(#cardGrad)" stroke="#6366f1" stroke-width="1" />
-      <text x="15" y="24" font-family="sans-serif" font-size="12" font-weight="700" fill="#a5b4fc">📜 Standards &amp; African Readiness</text>
-      <text x="15" y="44" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• HL7 FHIR R4: ServiceRequest,</text>
-      <text x="15" y="60" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">  BloodProduct, Location resources</text>
-      <text x="15" y="76" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• ISBT 128 barcode compatibility</text>
-      <text x="15" y="92" font-family="sans-serif" font-size="10.5" fill="#34d399">• KDPA Compliant: Section 46 ground</text>
-      <text x="15" y="108" font-family="sans-serif" font-size="10.5" fill="#cbd5e1">• Mobile-first 375px &amp; 2G offline</text>
-    </g>
-  </g>
-
-  <!-- Marker definition -->
-  <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-reverse">
-      <path d="M 0 1 L 8 5 L 0 9 z" fill="#38bdf8" />
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#334155" />
+    </marker>
+    <marker id="arrowFuture" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8" />
     </marker>
   </defs>
 
-  <!-- Bottom Badges -->
-  <g transform="translate(60, 735)">
-    <text x="0" y="20" font-family="sans-serif" font-size="12" fill="#64748b">Verified: 110 Django DRF Tests Passed · 41 End-to-End API Checks Green · 34,135 Transfer Records Analyzed</text>
-    <text x="1080" y="20" font-family="sans-serif" font-size="12" font-weight="bold" fill="#e11d48" text-anchor="end">TEAM GOLDEN HOUR 2026</text>
+  <rect width="1200" height="900" fill="#ffffff" />
+
+  <!-- Title -->
+  <text x="30" y="34" font-size="22" font-weight="700" fill="#0f172a">Golden Hour: how it fits together</text>
+  <text x="30" y="52" font-size="12.5" fill="#475569">Solid lines are built and tested. Dashed lines and boxes are future work.</text>
+
+  <!-- ===== Panel 1: the prototype ===== -->
+  <rect x="20" y="62" width="1160" height="378" rx="12" fill="#f8fafc" stroke="#cbd5e1" />
+  <text x="40" y="86" font-size="14" font-weight="700" fill="#0f172a">1. This prototype</text>
+
+  <!-- Users -->
+  <g font-size="12.5">
+    <rect x="40" y="105" width="170" height="68" rx="8" fill="#ffffff" stroke="#94a3b8" />
+    <text x="52" y="127" font-weight="700" fill="#0f172a">Clinician</text>
+    <text x="52" y="144" font-size="11" fill="#475569">Raises the request,</text>
+    <text x="52" y="159" font-size="11" fill="#475569">confirms arrival</text>
+
+    <rect x="40" y="185" width="170" height="68" rx="8" fill="#ffffff" stroke="#94a3b8" />
+    <text x="52" y="207" font-weight="700" fill="#0f172a">Blood bank officer</text>
+    <text x="52" y="224" font-size="11" fill="#475569">Accept, Change or Reject</text>
+    <text x="52" y="239" font-size="11" fill="#475569">(a reason for the last two)</text>
+
+    <rect x="40" y="265" width="170" height="68" rx="8" fill="#ffffff" stroke="#94a3b8" />
+    <text x="52" y="287" font-weight="700" fill="#0f172a">MoH authorising officer</text>
+    <text x="52" y="304" font-size="11" fill="#475569">Approves, stops or reviews</text>
+    <text x="52" y="319" font-size="11" fill="#475569">a transfer</text>
+
+    <rect x="40" y="345" width="170" height="75" rx="8" fill="#ffffff" stroke="#94a3b8" />
+    <text x="52" y="367" font-weight="700" fill="#0f172a">Supplying lab officer</text>
+    <text x="52" y="384" font-size="11" fill="#475569">Confirms or declines</text>
+    <text x="52" y="399" font-size="11" fill="#475569">the release. Sees no</text>
+    <text x="52" y="413" font-size="11" fill="#475569">patient fields.</text>
+  </g>
+
+  <!-- Users to screens -->
+  <g stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)" fill="none">
+    <line x1="210" y1="139" x2="238" y2="139" />
+    <line x1="210" y1="219" x2="238" y2="219" />
+    <line x1="210" y1="299" x2="238" y2="299" />
+    <line x1="210" y1="382" x2="238" y2="382" />
+  </g>
+
+  <!-- Screens -->
+  <rect x="240" y="105" width="170" height="315" rx="10" fill="#eef2ff" stroke="#6366f1" stroke-width="1.5" />
+  <text x="252" y="128" font-size="13.5" font-weight="700" fill="#0f172a">React screens</text>
+  <g font-size="11" fill="#475569">
+    <text x="252" y="148">Vite, TypeScript, Tailwind</text>
+    <text x="252" y="166">Landing page, sign-in and a</text>
+    <text x="252" y="180">workspace for each role</text>
+    <text x="252" y="200">Refreshes every 10 seconds</text>
+    <text x="252" y="220">Failed sends are kept in an</text>
+    <text x="252" y="234">outbox on the device, marked</text>
+    <text x="252" y="248">NOT SENT, and retried</text>
+  </g>
+
+  <!-- Screens to API -->
+  <line x1="410" y1="262" x2="443" y2="262" stroke="#334155" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+  <text x="426" y="254" font-size="9.5" fill="#475569" text-anchor="middle">token</text>
+
+  <!-- API -->
+  <rect x="445" y="105" width="360" height="315" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5" />
+  <text x="460" y="126" font-size="13.5" font-weight="700" fill="#0f172a">Django REST API</text>
+  <text x="460" y="141" font-size="11" fill="#475569">Token login. A role check on every endpoint.</text>
+
+  <g font-size="12">
+    <rect x="460" y="152" width="330" height="55" rx="8" fill="#ffffff" stroke="#93c5fd" />
+    <text x="472" y="172" font-weight="700" fill="#0f172a">Rules engine (fixed code, no AI)</text>
+    <text x="472" y="190" font-size="11" fill="#475569">ABO and RhD compatibility, safe-unit filter</text>
+
+    <rect x="460" y="217" width="330" height="55" rx="8" fill="#ffffff" stroke="#93c5fd" />
+    <text x="472" y="237" font-weight="700" fill="#0f172a">Ranking</text>
+    <text x="472" y="255" font-size="11" fill="#475569">0.50 arrival + 0.30 scarcity + 0.20 expiry (lower is better)</text>
+
+    <rect x="460" y="282" width="330" height="55" rx="8" fill="#ffffff" stroke="#93c5fd" />
+    <text x="472" y="302" font-weight="700" fill="#0f172a">Request flow and holds</text>
+    <text x="472" y="320" font-size="11" fill="#475569">Status steps, auto-hold, hold expires after 30 min</text>
+
+    <rect x="460" y="347" width="330" height="62" rx="8" fill="#ffffff" stroke="#93c5fd" />
+    <text x="472" y="367" font-weight="700" fill="#0f172a">Audit log (append-only in the code)</text>
+    <text x="472" y="385" font-size="11" fill="#475569">One event for every step: who, role, action,</text>
+    <text x="472" y="399" font-size="11" fill="#475569">before, after, reason, time</text>
+  </g>
+
+  <!-- ML box -->
+  <rect x="835" y="105" width="335" height="115" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="1.5" />
+  <text x="850" y="127" font-size="13.5" font-weight="700" fill="#0f172a">Arrival-time estimate</text>
+  <line x1="1003" y1="138" x2="1003" y2="210" stroke="#a7f3d0" stroke-dasharray="4 3" />
+  <g font-size="11" fill="#475569">
+    <text x="850" y="152" font-weight="700" fill="#0f172a">Model</text>
+    <text x="850" y="168">Random Forest</text>
+    <text x="850" y="182">Low, middle, high</text>
+    <text x="850" y="196">minutes for each site</text>
+    <text x="1015" y="152" font-weight="700" fill="#0f172a">Fallback</text>
+    <text x="1015" y="168">Route table +/- 20%</text>
+    <text x="1015" y="182">Used when the model</text>
+    <text x="1015" y="196">is offline. Marked</text>
+    <text x="1015" y="210">"fallback" on screen.</text>
+  </g>
+  <line x1="805" y1="162" x2="833" y2="162" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)" />
+
+  <!-- Stores -->
+  <rect x="835" y="245" width="160" height="118" rx="10" fill="#ffffff" stroke="#64748b" stroke-width="1.5" />
+  <text x="847" y="266" font-size="13" font-weight="700" fill="#0f172a">Starter dataset</text>
+  <g font-size="10.5" fill="#475569">
+    <text x="847" y="283">Read-only SQLite file</text>
+    <text x="847" y="298">facilities, routes, units,</text>
+    <text x="847" y="312">donations</text>
+    <text x="847" y="332">Model training only:</text>
+    <text x="847" y="346">transfers, requests</text>
+  </g>
+
+  <rect x="1010" y="245" width="160" height="118" rx="10" fill="#ffffff" stroke="#64748b" stroke-width="1.5" />
+  <text x="1022" y="266" font-size="13" font-weight="700" fill="#0f172a">App database</text>
+  <g font-size="10.5" fill="#475569">
+    <text x="1022" y="283">SQLite file of our own</text>
+    <text x="1022" y="298">users, requests, ranked</text>
+    <text x="1022" y="312">options, holds, dispatches,</text>
+    <text x="1022" y="326">audit events</text>
+  </g>
+
+  <rect x="835" y="375" width="335" height="45" rx="10" fill="#ffffff" stroke="#64748b" stroke-width="1.5" />
+  <text x="847" y="394" font-size="13" font-weight="700" fill="#0f172a">config/kenya.yaml</text>
+  <text x="847" y="410" font-size="10.5" fill="#475569">Country rules as settings: approval route, timers, limits</text>
+
+  <!-- API to stores -->
+  <line x1="805" y1="304" x2="833" y2="304" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)" />
+  <path d="M805 232 H1090 V243" fill="none" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)" />
+  <line x1="805" y1="397" x2="833" y2="397" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)" />
+
+  <!-- ===== Panel 2: wider system ===== -->
+  <rect x="20" y="456" width="1160" height="424" rx="12" fill="#ffffff" stroke="#cbd5e1" />
+  <text x="40" y="480" font-size="14" font-weight="700" fill="#0f172a">2. Where this sits in a wider blood-bank information system (ABBIS)</text>
+  <text x="40" y="498" font-size="11.5" fill="#475569">Dashed boxes are other modules a full system would have. None of them is connected today.</text>
+
+  <!-- Module row -->
+  <g font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">
+    <rect x="45" y="516" width="150" height="82" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="5 4" />
+    <text x="120" y="538">Donor</text><text x="120" y="553">management</text>
+
+    <rect x="205" y="516" width="150" height="82" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="5 4" />
+    <text x="280" y="538">Collection</text><text x="280" y="553">and testing</text>
+
+    <rect x="365" y="516" width="150" height="82" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="5 4" />
+    <text x="440" y="538">Processing</text><text x="440" y="553">and inventory</text>
+
+    <rect x="525" y="516" width="150" height="82" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="5 4" />
+    <text x="600" y="538">Cold-chain</text><text x="600" y="553">monitoring</text>
+
+    <rect x="685" y="516" width="150" height="82" rx="8" fill="#fffbeb" stroke="#d97706" stroke-dasharray="5 4" />
+    <text x="760" y="538">Distribution</text><text x="760" y="553">and logistics</text>
+
+    <rect x="845" y="516" width="150" height="82" rx="8" fill="#fffbeb" stroke="#d97706" stroke-dasharray="5 4" />
+    <text x="920" y="538">Hospital</text><text x="920" y="553">transfusion service</text>
+
+    <rect x="1005" y="516" width="150" height="82" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="5 4" />
+    <text x="1080" y="538">Reporting</text><text x="1080" y="553">(DHIS2)</text>
+  </g>
+  <g font-size="10.5" font-weight="400" fill="#64748b" text-anchor="middle">
+    <text x="120" y="578">donors, drives</text>
+    <text x="280" y="578">donations, screening</text>
+    <text x="440" y="578">stock, expiry</text>
+    <text x="600" y="578">temperature logs</text>
+    <text x="760" y="578">dispatch, transport</text>
+    <text x="920" y="578">orders, receipt</text>
+    <text x="1080" y="578">national indicators</text>
+  </g>
+
+  <!-- Future links (dashed) -->
+  <g stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4" fill="none" marker-end="url(#arrowFuture)">
+    <line x1="440" y1="664" x2="440" y2="600" />
+    <line x1="600" y1="664" x2="600" y2="600" />
+    <line x1="760" y1="664" x2="760" y2="600" />
+    <line x1="805" y1="664" x2="905" y2="600" />
+    <line x1="815" y1="672" x2="1050" y2="600" />
+  </g>
+  <g font-size="10" fill="#64748b" text-anchor="middle">
+    <text x="470" y="636">future: live stock</text>
+    <text x="640" y="636">future: alerts</text>
+    <text x="800" y="624">future: dispatch</text>
+    <text x="930" y="620">future: orders</text>
+    <text x="1010" y="640">future: counts</text>
+  </g>
+
+  <!-- Starter data, prototype, app database -->
+  <rect x="40" y="664" width="280" height="100" rx="10" fill="#ffffff" stroke="#64748b" stroke-width="1.5" />
+  <text x="54" y="686" font-size="13" font-weight="700" fill="#0f172a">Starter dataset (read-only)</text>
+  <g font-size="11" fill="#475569">
+    <text x="54" y="705">Stands in today for stock, screening</text>
+    <text x="54" y="720">and cold-chain data from the modules above.</text>
+    <text x="54" y="741">The prototype reads: facilities, routes,</text>
+    <text x="54" y="755">units, donations.</text>
+  </g>
+
+  <rect x="380" y="664" width="440" height="100" rx="12" fill="#fef3c7" stroke="#d97706" stroke-width="2.5" />
+  <text x="600" y="692" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">Golden Hour: emergency request and dispatch</text>
+  <g font-size="11.5" fill="#475569" text-anchor="middle">
+    <text x="600" y="714">This prototype. Raise, match, rank, decide,</text>
+    <text x="600" y="730">authorise, release, deliver, confirm.</text>
+    <text x="600" y="750" font-size="10.5" fill="#92400e">Sits between distribution and the hospital transfusion service</text>
+  </g>
+
+  <rect x="880" y="664" width="280" height="100" rx="10" fill="#ffffff" stroke="#64748b" stroke-width="1.5" />
+  <text x="894" y="686" font-size="13" font-weight="700" fill="#0f172a">The prototype's own app database</text>
+  <g font-size="11" fill="#475569">
+    <text x="894" y="705">The prototype writes: requests, ranked</text>
+    <text x="894" y="720">options, holds, dispatches and audit events.</text>
+    <text x="894" y="741">It never changes the starter dataset.</text>
+  </g>
+
+  <line x1="320" y1="714" x2="378" y2="714" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)" />
+  <line x1="822" y1="714" x2="878" y2="714" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)" />
+  <text x="349" y="706" font-size="9.5" fill="#475569" text-anchor="middle">reads</text>
+  <text x="850" y="706" font-size="9.5" fill="#475569" text-anchor="middle">writes</text>
+
+  <!-- Standards and legend -->
+  <line x1="40" y1="786" x2="1160" y2="786" stroke="#e2e8f0" />
+  <text x="40" y="808" font-size="12" font-weight="700" fill="#0f172a">Standards</text>
+  <text x="40" y="826" font-size="11.5" fill="#475569">FHIR R4, ISBT 128 and DHIS2 are mapped on paper (see docs/fhir-mapping.md). Nothing is exported today.</text>
+
+  <g font-size="11.5" fill="#475569">
+    <line x1="40" y1="852" x2="80" y2="852" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)" />
+    <text x="90" y="856">Built and tested</text>
+    <line x1="230" y1="852" x2="270" y2="852" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrowFuture)" />
+    <text x="280" y="856">Future link, not built</text>
+    <rect x="450" y="842" width="26" height="16" rx="4" fill="#fef3c7" stroke="#d97706" stroke-width="2" />
+    <text x="486" y="856">This prototype</text>
+    <rect x="610" y="842" width="26" height="16" rx="4" fill="#fffbeb" stroke="#d97706" stroke-dasharray="4 3" />
+    <text x="646" y="856">Nearest neighbour modules</text>
   </g>
 </svg>
